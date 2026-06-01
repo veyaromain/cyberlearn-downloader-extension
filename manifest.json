@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Cyberlearn Downloader",
+  "version": "1.1",
+  "description": "Compile ou télécharge les fichiers d'une page Cyberlearn pour usage LLM.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
