@@ -467,7 +467,17 @@ btnAction.addEventListener("click", async () => {
 
 // --- Init ---
 (async () => {
-  splitOption.style.display = "flex"; // visible par défaut (mode compile actif)
+  // Masquer l'UI pendant la détection
+  document.getElementById("mode-selector").style.display = "none";
+  splitOption.style.display = "none";
+  selectBar.style.display   = "none";
+  btnAction.style.display   = "none";
+
   fileEntries = await detectFiles();
   renderList(fileEntries);
+
+  // Révéler l'UI
+  document.getElementById("mode-selector").style.display = "flex";
+  splitOption.style.display = "flex";
+  btnAction.style.display   = "block";
 })();
