@@ -1,5 +1,20 @@
 // popup.js — détection, extraction et compilation de fichiers pour LLM
 import { zipSync } from "./fflate.mjs";
+import Tesseract from "./tesseract.esm.min.js";
+
+let tesseractWorker = null;
+
+async function getTesseractWorker() {
+  if (tesseractWorker) return tesseractWorker;
+  tesseractWorker = await Tesseract.createWorker("fra+eng", 1, {
+    workerPath:  chrome.runtime.getURL("tesseract.worker.min.js"),
+    corePath:    chrome.runtime.getURL("tesseract-core.wasm.js"),
+    langPath:    chrome.runtime.getURL(""),
+    cacheMethod: "none",
+    logger:      () => {},
+  });
+  return tesseractWorker;
+}
 
 const btnAction      = document.getElementById("btn-action");
 const statusEl       = document.getElementById("status");
@@ -236,15 +251,32 @@ async function getPdfJs() {
 }
 
 // --- Extraction de contenu selon le type de fichier ---
-async function extractContent(pdfjsLib, url) {
+// Retourne toujours une string
+async function extractContent(pdfjsLib, url, onProgress) {
   const ext = getExt(url);
 
   if (PDF_EXT.has(ext)) {
-    return await extractPdfText(pdfjsLib, url);
+    const { text, usedOcr } = await extractPdfText(pdfjsLib, url, onProgress);
+    return usedOcr ? `<!-- OCR appliqué sur pages sans texte sélectionnable -->\n${text}` : text;
   }
 
   if (IMAGE_EXT.has(ext)) {
-    return `[Image binaire — ${basename(url)} — extraction texte non disponible]`;
+    // OCR direct sur les images
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob   = await res.blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width  = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      const worker = await getTesseractWorker();
+      const { data: { text } } = await worker.recognize(canvas);
+      return `<!-- OCR image -->\n${text.trim()}`;
+    } catch (e) {
+      return `[Image — OCR échoué : ${e.message}]`;
+    }
   }
 
   // Tentative de lecture texte brut (code, CSV, JSON, SQL, MD, etc.)
@@ -267,15 +299,26 @@ async function extractContent(pdfjsLib, url) {
   return `[Fichier binaire — ${basename(url)} (${ext.toUpperCase()}) — contenu non extractible]`;
 }
 
-async function extractPdfText(pdfjsLib, url) {
+async function renderPageToCanvas(page, scale = 2) {
+  const viewport = page.getViewport({ scale });
+  const canvas   = document.createElement("canvas");
+  canvas.width   = viewport.width;
+  canvas.height  = viewport.height;
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+  return canvas;
+}
+
+async function extractPdfText(pdfjsLib, url, onProgress) {
   const response = await fetch(url, { credentials: "include" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const buffer = await response.arrayBuffer();
 
   const doc       = await pdfjsLib.getDocument({ data: buffer }).promise;
   const pageParts = [];
+  let   usedOcr   = false;
 
   for (let i = 1; i <= doc.numPages; i++) {
+    if (onProgress) onProgress(i, doc.numPages);
     const page    = await doc.getPage(i);
     const content = await page.getTextContent();
 
@@ -293,10 +336,26 @@ async function extractPdfText(pdfjsLib, url) {
       lastY = y;
     }
     if (currentLine.trim()) lines.push(currentLine.trim());
-    if (lines.length) pageParts.push(`<!-- page ${i} -->\n${lines.join("\n")}`);
+
+    if (lines.length > 0) {
+      pageParts.push(`<!-- page ${i} -->\n${lines.join("\n")}`);
+    } else {
+      // Page sans texte sélectionnable → OCR
+      usedOcr = true;
+      try {
+        const canvas = await renderPageToCanvas(page);
+        const worker = await getTesseractWorker();
+        const { data: { text } } = await worker.recognize(canvas);
+        const ocrText = text.trim();
+        if (ocrText) pageParts.push(`<!-- page ${i} (OCR) -->\n${ocrText}`);
+      } catch (e) {
+        pageParts.push(`<!-- page ${i} — OCR échoué : ${e.message} -->`);
+      }
+    }
   }
 
-  return pageParts.join("\n\n");
+  const result = pageParts.join("\n\n");
+  return { text: result, usedOcr };
 }
 
 // --- Heuristique titres (pour PDFs) ---
@@ -451,7 +510,9 @@ btnAction.addEventListener("click", async () => {
     if (dot) dot.style.background = "#ff9500";
 
     try {
-      const text = await extractContent(pdfjsLib, url);
+      const text = await extractContent(pdfjsLib, url, (pageNum, pageCount) => {
+        setStatus(`Extraction ${j + 1}/${total} — ${name} (p.${pageNum}/${pageCount})`);
+      });
       sections.push({ name, text, ext });
       if (dot) dot.style.background = "#34c759";
     } catch (e) {
