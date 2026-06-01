@@ -8,6 +8,8 @@ const subtitleEl     = document.getElementById("subtitle");
 const selectBar      = document.getElementById("select-bar");
 const checkedCountEl = document.getElementById("checked-count");
 const btnToggleAll   = document.getElementById("btn-toggle-all");
+const splitOption    = document.getElementById("split-option");
+const chkSplit       = document.getElementById("chk-split");
 
 let fileEntries = []; // [{url, name}]
 let mode = "compile"; // "compile" | "download"
@@ -61,6 +63,7 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
     document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     mode = btn.dataset.mode;
+    splitOption.style.display = mode === "compile" ? "flex" : "none";
     updateActionButton();
   });
 });
@@ -347,6 +350,20 @@ function buildLLMDoc(sections, pageTitle) {
   return parts.join("\n");
 }
 
+// --- Construction d'un .md individuel ---
+function buildSingleDoc({ name, text, ext }) {
+  const now       = new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  const cleanName = name.replace(/\.[a-z0-9]+$/i, "");
+  const parts     = [];
+  parts.push(`# ${cleanName}\n`);
+  parts.push(`**Fichier source :** \`${name}\`  `);
+  parts.push(`**Type :** ${(ext || "?").toUpperCase()}  `);
+  parts.push(`**Généré le :** ${now}\n`);
+  parts.push("---\n");
+  parts.push(detectHeadings(text, ext));
+  return parts.join("\n");
+}
+
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a   = document.createElement("a");
@@ -430,11 +447,21 @@ btnAction.addEventListener("click", async () => {
     }
   }
 
-  const content  = buildLLMDoc(sections, pageTitle);
-  const filename = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_llm.md`;
-  downloadBlob(new Blob([content], { type: "text/markdown;charset=utf-8" }), filename);
-
-  setStatus(`Terminé — ${(content.length / 1024).toFixed(1)} Ko`, "success");
+  if (chkSplit.checked) {
+    // --- Un .md par fichier ---
+    for (const { name, text, ext } of sections) {
+      const cleanName = name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
+      const content   = buildSingleDoc({ name, text, ext });
+      downloadBlob(new Blob([content], { type: "text/markdown;charset=utf-8" }), `${cleanName}.md`);
+    }
+    setStatus(`${sections.length} fichier${sections.length > 1 ? "s" : ""} .md générés`, "success");
+  } else {
+    // --- Compilation en un seul .md ---
+    const content  = buildLLMDoc(sections, pageTitle);
+    const filename = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_llm.md`;
+    downloadBlob(new Blob([content], { type: "text/markdown;charset=utf-8" }), filename);
+    setStatus(`Terminé — ${(content.length / 1024).toFixed(1)} Ko`, "success");
+  }
   btnAction.disabled = false;
 });
 

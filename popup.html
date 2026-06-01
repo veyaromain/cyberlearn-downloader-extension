@@ -61,6 +61,26 @@
       color: #fff;
     }
 
+    /* --- Option split --- */
+    #split-option {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 16px;
+      border-bottom: 1px solid #e5e5e5;
+      font-size: 11px;
+      color: #1d1d1f;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    #split-option input[type="checkbox"] {
+      accent-color: #0071e3;
+      width: 13px;
+      height: 13px;
+      cursor: pointer;
+    }
+
     /* --- Barre tout sélectionner / tout décocher --- */
     #select-bar {
       display: flex;
@@ -193,6 +213,11 @@
   <button class="mode-btn active" data-mode="compile">Compiler pour LLM</button>
   <button class="mode-btn"        data-mode="download">Télécharger fichiers</button>
 </div>
+
+<label id="split-option">
+  <input type="checkbox" id="chk-split">
+  Un fichier <code>.md</code> par document
+</label>
 
 <div id="select-bar" style="display:none">
   <span id="checked-count"></span>
