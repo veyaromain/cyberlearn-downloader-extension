@@ -17,6 +17,7 @@ async function getTesseractWorker() {
 }
 
 const btnAction        = document.getElementById("btn-action");
+const btnReload        = document.getElementById("btn-reload");
 const statusEl         = document.getElementById("status");
 const listEl           = document.getElementById("file-list");
 const emptyEl          = document.getElementById("empty");
@@ -199,33 +200,57 @@ function updateSelectBar() {
 // --- Détection des fichiers dans l'onglet actif ---
 async function detectFiles() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
   const extList = EXTENSIONS; // transmis dans le contexte de la page via func args
 
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: () => {
       const seen = new Set();
+      const out  = [];
 
-      // Cibler uniquement les ressources déposées par le prof :
-      // .activity-item[data-activityname] contenant .modtype_resource
+      function addLink(href, name) {
+        if (!href || seen.has(href)) return;
+        seen.add(href);
+        out.push({ href, name });
+      }
+
+      // Stratégie 1 : .activity-item[data-activityname] contenant .modtype_resource
       const activities = Array.from(
         document.querySelectorAll(".activity-item[data-activityname] .modtype_resource")
       );
-
-      return activities.flatMap(activity => {
+      for (const activity of activities) {
         const card = activity.closest(".activity-item[data-activityname]");
         const name = card?.dataset.activityname || null;
-        const anchors = Array.from(activity.querySelectorAll("a[href]"));
+        for (const a of activity.querySelectorAll("a[href]")) {
+          addLink(a.href, name);
+        }
+      }
 
-        return anchors
-          .map(a => ({ href: a.href, name }))
-          .filter(({ href }) => {
-            if (seen.has(href)) return false;
-            seen.add(href);
-            return true;
-          });
-      });
+      // Stratégie 2 : .activity[data-activityname] (Moodle 4.x sans tiret)
+      const activities2 = Array.from(
+        document.querySelectorAll(".activity[data-activityname]")
+      );
+      for (const card of activities2) {
+        if (!card.classList.contains("modtype_resource") &&
+            !card.querySelector(".modtype_resource") &&
+            !card.className.includes("resource")) continue;
+        const name = card.dataset.activityname || null;
+        for (const a of card.querySelectorAll("a[href]")) {
+          addLink(a.href, name);
+        }
+      }
+
+      // Stratégie 3 : tous les liens vers pluginfile.php ou mod/resource/view.php
+      for (const a of document.querySelectorAll("a[href]")) {
+        const h = a.href || "";
+        if (h.includes("pluginfile.php") || h.includes("/mod/resource/view.php")) {
+          const card = a.closest("[data-activityname]");
+          const name = card?.dataset.activityname || a.textContent.trim() || null;
+          addLink(h, name);
+        }
+      }
+
+      return out;
     },
   });
 
@@ -619,20 +644,34 @@ btnAction.addEventListener("click", async () => {
   btnAction.disabled = false;
 });
 
-// --- Init ---
-(async () => {
+async function runDetect() {
   const loader = document.getElementById("loader");
 
-  // Masquer l'UI pendant la détection
-  document.getElementById("mode-selector").style.display = "none";
-  selectBar.style.display   = "none";
-  btnAction.style.display   = "none";
+  btnReload.disabled = true;
+  btnReload.classList.add("spinning");
+  loader.classList.remove("hidden");
+  selectBar.style.display = "none";
+  btnAction.style.display = "none";
+  setStatus("");
 
   fileEntries = await detectFiles();
   renderList(fileEntries);
 
-  // Stopper l'animation et révéler l'UI
   loader.classList.add("hidden");
-  document.getElementById("mode-selector").style.display = "flex";
   btnAction.style.display   = "block";
+  btnReload.disabled = false;
+  btnReload.classList.remove("spinning");
+}
+
+btnReload.addEventListener("click", runDetect);
+
+// --- Init ---
+(async () => {
+  document.getElementById("mode-selector").style.display = "none";
+  selectBar.style.display = "none";
+  btnAction.style.display = "none";
+
+  await runDetect();
+
+  document.getElementById("mode-selector").style.display = "flex";
 })();

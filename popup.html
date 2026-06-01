@@ -15,7 +15,12 @@
 
     header {
       padding: 16px 16px 12px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
     }
+
+    header div { flex: 1; }
 
     header h1 {
       font-size: 15px;
@@ -28,6 +33,25 @@
       font-size: 11px;
       color: #6e6e73;
     }
+
+    #btn-reload {
+      flex-shrink: 0;
+      margin-top: 1px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      color: #6e6e73;
+      font-size: 14px;
+      line-height: 1;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    #btn-reload:hover { color: #0071e3; background: #f0f0f5; }
+    #btn-reload.spinning { animation: spin 0.6s linear infinite; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* --- Barre de chargement --- */
     #loader {
@@ -303,8 +327,11 @@
 <body>
 
 <header>
-  <h1>Cyberlearn Downloader</h1>
-  <p id="subtitle">Recherche des fichiers…</p>
+  <div>
+    <h1>Cyberlearn Downloader</h1>
+    <p id="subtitle">Recherche des fichiers…</p>
+  </div>
+  <button id="btn-reload" title="Recharger les fichiers">↻</button>
 </header>
 
 <div id="loader"><div id="loader-bar"></div></div>
