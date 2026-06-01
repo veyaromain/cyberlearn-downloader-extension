@@ -1,4 +1,5 @@
 // popup.js — détection, extraction et compilation de fichiers pour LLM
+import { zipSync } from "./fflate.mjs";
 
 const btnAction      = document.getElementById("btn-action");
 const statusEl       = document.getElementById("status");
@@ -389,6 +390,7 @@ btnAction.addEventListener("click", async () => {
 
   if (mode === "download") {
     // --- Téléchargement brut ---
+    const files = {};
     for (const [j, idx] of selectedIndices.entries()) {
       const { url, name: activityName } = fileEntries[idx];
       const name = activityName || basename(url);
@@ -400,10 +402,10 @@ btnAction.addEventListener("click", async () => {
       try {
         const res = await fetch(url, { credentials: "include" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        const ext  = getExt(url);
+        const ext      = getExt(url);
         const filename = name.includes(".") ? name : ext ? `${name}.${ext}` : name;
-        downloadBlob(blob, filename);
+        const buf      = await res.arrayBuffer();
+        files[filename] = new Uint8Array(buf);
         if (dot) dot.style.background = "#34c759";
       } catch (e) {
         if (dot) dot.style.background = "#ff3b30";
@@ -411,7 +413,18 @@ btnAction.addEventListener("click", async () => {
       }
     }
 
-    setStatus(`${total} fichier${total > 1 ? "s" : ""} téléchargé${total > 1 ? "s" : ""}`, "success");
+    const entries = Object.keys(files);
+    if (entries.length === 1) {
+      const [filename] = entries;
+      downloadBlob(new Blob([files[filename]]), filename);
+    } else if (entries.length > 1) {
+      const zipName = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.zip`;
+      setStatus("Compression…");
+      const zipped = zipSync(files);
+      downloadBlob(new Blob([zipped], { type: "application/zip" }), zipName);
+    }
+
+    setStatus(`${entries.length} fichier${entries.length > 1 ? "s" : ""} téléchargé${entries.length > 1 ? "s" : ""}`, "success");
     btnAction.disabled = false;
     return;
   }
@@ -447,14 +460,25 @@ btnAction.addEventListener("click", async () => {
     }
   }
 
-  if (chkSplit.checked) {
-    // --- Un .md par fichier ---
-    for (const { name, text, ext } of sections) {
-      const cleanName = name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
-      const content   = buildSingleDoc({ name, text, ext });
-      downloadBlob(new Blob([content], { type: "text/markdown;charset=utf-8" }), `${cleanName}.md`);
+  if (chkSplit.checked && sections.length > 1) {
+    // --- Un .md par fichier → zip ---
+    const enc   = new TextEncoder();
+    const files = {};
+    for (const section of sections) {
+      const cleanName = section.name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
+      files[`${cleanName}.md`] = enc.encode(buildSingleDoc(section));
     }
-    setStatus(`${sections.length} fichier${sections.length > 1 ? "s" : ""} .md générés`, "success");
+    const zipName = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_llm.zip`;
+    setStatus("Compression…");
+    const zipped = zipSync(files);
+    downloadBlob(new Blob([zipped], { type: "application/zip" }), zipName);
+    setStatus(`${sections.length} fichiers .md compressés`, "success");
+  } else if (chkSplit.checked && sections.length === 1) {
+    // --- Un seul fichier, pas besoin de zip ---
+    const section   = sections[0];
+    const cleanName = section.name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
+    downloadBlob(new Blob([buildSingleDoc(section)], { type: "text/markdown;charset=utf-8" }), `${cleanName}.md`);
+    setStatus("1 fichier .md généré", "success");
   } else {
     // --- Compilation en un seul .md ---
     const content  = buildLLMDoc(sections, pageTitle);

@@ -10,7 +10,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs"],
+      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs", "fflate.mjs"],
       "matches": ["<all_urls>"]
     }
   ]
