@@ -16,18 +16,21 @@ async function getTesseractWorker() {
   return tesseractWorker;
 }
 
-const btnAction      = document.getElementById("btn-action");
-const statusEl       = document.getElementById("status");
-const listEl         = document.getElementById("file-list");
-const emptyEl        = document.getElementById("empty");
-const subtitleEl     = document.getElementById("subtitle");
-const selectBar      = document.getElementById("select-bar");
-const checkedCountEl = document.getElementById("checked-count");
-const btnToggleAll   = document.getElementById("btn-toggle-all");
-const splitOption    = document.getElementById("split-option");
-const chkSplit       = document.getElementById("chk-split");
+const btnAction        = document.getElementById("btn-action");
+const statusEl         = document.getElementById("status");
+const listEl           = document.getElementById("file-list");
+const emptyEl          = document.getElementById("empty");
+const subtitleEl       = document.getElementById("subtitle");
+const selectBar        = document.getElementById("select-bar");
+const checkedCountEl   = document.getElementById("checked-count");
+const btnToggleAll     = document.getElementById("btn-toggle-all");
+const optionsToggle    = document.getElementById("options-toggle");
+const optionsPanel     = document.getElementById("options-panel");
+const chkSplit         = document.getElementById("chk-split");
+const typeFiltersEl    = document.getElementById("type-filters");
 
-let fileEntries = []; // [{url, name}]
+let fileEntries    = []; // [{url, name}]
+let activeTypeFilters = new Set(); // types activés (vide = tous)
 let mode = "compile"; // "compile" | "download"
 
 // Extensions de fichiers considérées comme des ressources à capturer
@@ -79,10 +82,73 @@ document.querySelectorAll(".mode-btn").forEach(btn => {
     document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     mode = btn.dataset.mode;
-    splitOption.style.display = mode === "compile" ? "flex" : "none";
+    // Masquer l'option split en mode téléchargement
+    document.querySelector("#options-panel .option-row:first-child").style.display =
+      mode === "compile" ? "flex" : "none";
     updateActionButton();
   });
 });
+
+// --- Toggle options ---
+optionsToggle.addEventListener("click", () => {
+  optionsToggle.classList.toggle("open");
+  optionsPanel.classList.toggle("open");
+});
+
+// --- Filtres par type ---
+function buildTypeFilters(files) {
+  // Compter les occurrences par extension
+  const counts = {};
+  for (const { url } of files) {
+    const ext = getExt(url) || "?";
+    counts[ext] = (counts[ext] || 0) + 1;
+  }
+
+  typeFiltersEl.innerHTML = "";
+  activeTypeFilters = new Set(Object.keys(counts)); // tout actif par défaut
+
+  for (const [ext, count] of Object.entries(counts)) {
+    const chip = document.createElement("div");
+    chip.className   = "type-chip active";
+    chip.dataset.ext = ext;
+    chip.innerHTML   = `${ext} <span class="chip-count">${count}</span>`;
+    chip.addEventListener("click", () => {
+      chip.classList.toggle("active");
+      if (chip.classList.contains("active")) {
+        activeTypeFilters.add(ext);
+      } else {
+        activeTypeFilters.delete(ext);
+      }
+      applyTypeFilter();
+    });
+    typeFiltersEl.appendChild(chip);
+  }
+}
+
+function applyTypeFilter() {
+  const items = listEl.querySelectorAll(".file-item");
+  fileEntries.forEach(({ url }, i) => {
+    const ext  = getExt(url) || "?";
+    const item = items[i];
+    if (!item) return;
+    const visible = activeTypeFilters.has(ext);
+    item.style.display = visible ? "flex" : "none";
+    // Si on masque, décocher aussi
+    if (!visible) {
+      const cb = item.querySelector("input[type=checkbox]");
+      if (cb) cb.checked = false;
+      item.classList.add("unchecked");
+    } else {
+      const cb = item.querySelector("input[type=checkbox]");
+      if (cb && !cb.checked) {
+        cb.checked = true;
+        item.classList.remove("unchecked");
+      }
+    }
+  });
+  updateSelectBar();
+  updateActionButton();
+}
 
 function updateActionButton() {
   const count = checkedEntries().length;
@@ -204,15 +270,17 @@ function renderList(files) {
   listEl.innerHTML = "";
 
   if (files.length === 0) {
-    emptyEl.style.display    = "block";
-    selectBar.style.display  = "none";
-    subtitleEl.textContent   = "Aucun fichier détecté";
+    emptyEl.style.display          = "block";
+    selectBar.style.display        = "none";
+    optionsToggle.style.display    = "none";
+    subtitleEl.textContent         = "Aucun fichier détecté";
     return;
   }
 
-  emptyEl.style.display   = "none";
-  selectBar.style.display = "flex";
-  subtitleEl.textContent  = `${files.length} fichier${files.length > 1 ? "s" : ""} détecté${files.length > 1 ? "s" : ""}`;
+  emptyEl.style.display        = "none";
+  selectBar.style.display      = "flex";
+  optionsToggle.style.display  = "flex";
+  subtitleEl.textContent       = `${files.length} fichier${files.length > 1 ? "s" : ""} détecté${files.length > 1 ? "s" : ""}`;
 
   for (const { url, name } of files) {
     const label = name || basename(url);
@@ -234,6 +302,7 @@ function renderList(files) {
     });
   }
 
+  buildTypeFilters(files);
   updateSelectBar();
   updateActionButton();
 }
@@ -556,7 +625,6 @@ btnAction.addEventListener("click", async () => {
 
   // Masquer l'UI pendant la détection
   document.getElementById("mode-selector").style.display = "none";
-  splitOption.style.display = "none";
   selectBar.style.display   = "none";
   btnAction.style.display   = "none";
 
@@ -566,6 +634,5 @@ btnAction.addEventListener("click", async () => {
   // Stopper l'animation et révéler l'UI
   loader.classList.add("hidden");
   document.getElementById("mode-selector").style.display = "flex";
-  splitOption.style.display = "flex";
   btnAction.style.display   = "block";
 })();

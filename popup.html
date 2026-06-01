@@ -81,23 +81,103 @@
       color: #fff;
     }
 
-    /* --- Option split --- */
-    #split-option {
+    /* --- Options panel (toggle) --- */
+    #options-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 16px 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    #options-toggle span {
+      font-size: 11px;
+      color: #6e6e73;
+    }
+
+    #options-toggle .chevron {
+      font-size: 9px;
+      color: #b0b0b5;
+      transition: transform 0.2s;
+    }
+
+    #options-toggle.open .chevron { transform: rotate(180deg); }
+
+    #options-panel {
+      overflow: hidden;
+      max-height: 0;
+      transition: max-height 0.2s ease;
+      background: #f9f9fb;
+    }
+
+    #options-panel.open { max-height: 200px; }
+
+    .option-row {
       display: flex;
       align-items: center;
       gap: 7px;
-      padding: 4px 16px 10px;
+      padding: 6px 16px;
       font-size: 11px;
       color: #1d1d1f;
       cursor: pointer;
       user-select: none;
     }
 
-    #split-option input[type="checkbox"] {
+    .option-row:last-child { padding-bottom: 10px; }
+
+    .option-row input[type="checkbox"] {
       accent-color: #0071e3;
       width: 13px;
       height: 13px;
       cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .option-row.section-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6e6e73;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding-bottom: 2px;
+      cursor: default;
+    }
+
+    /* --- Filtres par type --- */
+    #type-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding: 4px 16px 10px;
+    }
+
+    .type-chip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      border: 1.5px solid #d1d1d6;
+      background: #fff;
+      font-size: 10px;
+      font-weight: 600;
+      color: #6e6e73;
+      text-transform: uppercase;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.12s;
+    }
+
+    .type-chip.active {
+      border-color: #0071e3;
+      background: #e8f0fd;
+      color: #0071e3;
+    }
+
+    .type-chip .chip-count {
+      font-weight: 400;
+      opacity: 0.7;
     }
 
     /* --- Barre tout sélectionner / tout décocher --- */
@@ -234,10 +314,19 @@
   <button class="mode-btn"        data-mode="download">Télécharger fichiers</button>
 </div>
 
-<label id="split-option">
-  <input type="checkbox" id="chk-split">
-  Un fichier <code>.md</code> par document
-</label>
+<div id="options-toggle" style="display:none">
+  <span>Options</span>
+  <span class="chevron">▼</span>
+</div>
+
+<div id="options-panel">
+  <label class="option-row">
+    <input type="checkbox" id="chk-split">
+    Un fichier <code>.md</code> par document
+  </label>
+  <div class="option-row section-label">Filtrer par type</div>
+  <div id="type-filters"></div>
+</div>
 
 <div id="select-bar" style="display:none">
   <span id="checked-count"></span>
