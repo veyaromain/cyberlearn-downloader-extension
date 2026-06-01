@@ -491,6 +491,8 @@ btnAction.addEventListener("click", async () => {
 
 // --- Init ---
 (async () => {
+  const loader = document.getElementById("loader");
+
   // Masquer l'UI pendant la détection
   document.getElementById("mode-selector").style.display = "none";
   splitOption.style.display = "none";
@@ -500,7 +502,8 @@ btnAction.addEventListener("click", async () => {
   fileEntries = await detectFiles();
   renderList(fileEntries);
 
-  // Révéler l'UI
+  // Stopper l'animation et révéler l'UI
+  loader.classList.add("hidden");
   document.getElementById("mode-selector").style.display = "flex";
   splitOption.style.display = "flex";
   btnAction.style.display   = "block";
