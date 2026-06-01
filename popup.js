@@ -467,6 +467,7 @@ btnAction.addEventListener("click", async () => {
 
 // --- Init ---
 (async () => {
+  splitOption.style.display = "flex"; // visible par défaut (mode compile actif)
   fileEntries = await detectFiles();
   renderList(fileEntries);
 })();
