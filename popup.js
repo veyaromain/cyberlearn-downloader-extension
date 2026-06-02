@@ -250,11 +250,39 @@ async function detectFiles() {
         }
       }
 
-      return out;
+      // Stratégie 4 : dossiers Moodle (mod/folder/view.php) — à résoudre côté popup
+      const folders = [];
+      for (const a of document.querySelectorAll("a[href]")) {
+        const h = a.href || "";
+        if (h.includes("/mod/folder/view.php")) {
+          const card = a.closest("[data-activityname]");
+          const name = card?.dataset.activityname || a.textContent.trim() || null;
+          if (!folders.some(f => f.href === h)) folders.push({ href: h, name });
+        }
+      }
+
+      return { links: out, folders };
     },
   });
 
-  const candidates = results[0]?.result ?? [];
+  const raw       = results[0]?.result ?? { links: [], folders: [] };
+  const links     = Array.isArray(raw) ? raw : (raw.links ?? []);   // compat ancienne version
+  const folders   = Array.isArray(raw) ? []  : (raw.folders ?? []);
+
+  // Résoudre les dossiers Moodle : fetcher chaque page et en extraire les pluginfile.php
+  const folderLinks = (await Promise.all(folders.map(async ({ href, name: folderName }) => {
+    try {
+      const res  = await fetch(href, { credentials: "include" });
+      const html = await res.text();
+      const doc  = new DOMParser().parseFromString(html, "text/html");
+      return Array.from(doc.querySelectorAll("a[href]"))
+        .map(a => a.href)
+        .filter(h => h.includes("pluginfile.php"))
+        .map(h => ({ href: h, name: folderName }));
+    } catch { return []; }
+  }))).flat();
+
+  const candidates = [...links, ...folderLinks];
 
   // Résoudre les redirections Moodle (mod/resource/view.php)
   const resolved = await Promise.all(
