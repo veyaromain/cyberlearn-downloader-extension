@@ -21,7 +21,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs", "fflate.mjs", "tesseract.esm.min.js", "tesseract.worker.min.js", "tesseract-core.wasm.js", "fra.traineddata.gz", "engine.js"],
+      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs", "fflate.mjs", "tesseract.esm.min.js", "tesseract.worker.min.js", "tesseract-core.wasm.js", "fra.traineddata.gz", "engine.js", "runner.html", "runner.js"],
       "matches": ["<all_urls>"]
     }
   ]

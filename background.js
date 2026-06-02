@@ -112,10 +112,10 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       sendStatus(tabId, { btnKey: msg.btnKey, text: `✓ ${total} fichier${total > 1 ? "s" : ""}`, state: "done" });
 
     } else {
-      // compile — nécessite PDF.js, déléguer au popup
-      const task = { ...msg, files: resolvedFiles, tabId };
-      chrome.storage.session.set({ pendingTask: task }, () => {
-        chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+      // compile — déléguer au content script via iframe runner
+      chrome.tabs.sendMessage(tabId, {
+        type: "cld-compile-task",
+        task: { ...msg, files: resolvedFiles, tabId },
       });
     }
   });

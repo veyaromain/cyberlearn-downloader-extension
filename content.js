@@ -150,13 +150,41 @@
     }, 4000);
   }
 
-  // Écouter les mises à jour de statut du background
+  // Écouter les mises à jour du background (download) et du runner iframe (compile)
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type !== 'cld-status') return;
-    if (msg.state === 'progress') setProgress(msg.btnKey, msg.text);
-    else if (msg.state === 'done')  setDone(msg.btnKey, msg.text);
-    else if (msg.state === 'error') setError(msg.btnKey, msg.text);
+    if (msg.type === 'cld-status') {
+      if (msg.state === 'progress') setProgress(msg.btnKey, msg.text);
+      else if (msg.state === 'done')  setDone(msg.btnKey, msg.text);
+      else if (msg.state === 'error') setError(msg.btnKey, msg.text);
+    } else if (msg.type === 'cld-compile-task') {
+      launchRunner(msg.task);
+    }
   });
+
+  // Écouter les réponses du runner iframe via postMessage
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "cld-compile-status") return;
+    const { btnKey, state, text } = event.data;
+    if (state === 'progress') setProgress(btnKey, text);
+    else if (state === 'done')  setDone(btnKey, text);
+    else if (state === 'error') setError(btnKey, text);
+  });
+
+  function launchRunner(task) {
+    // Supprimer un runner précédent si présent
+    document.getElementById("cld-runner-frame")?.remove();
+    const iframe = document.createElement("iframe");
+    iframe.id  = "cld-runner-frame";
+    iframe.src = chrome.runtime.getURL("runner.html");
+    iframe.style.cssText = "display:none;width:0;height:0;position:absolute;";
+    document.body.appendChild(iframe);
+    // Envoyer la tâche dès que l'iframe est prête
+    iframe.addEventListener("load", () => {
+      iframe.contentWindow.postMessage({ type: "cld-compile-task", task }, "*");
+    });
+    // Nettoyer après 10 min max
+    setTimeout(() => iframe.remove(), 600000);
+  }
 
   function send(payload) {
     if (!chrome.runtime?.id) {
