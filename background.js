@@ -1,10 +1,15 @@
+// Envoie un message de statut au content script de l'onglet
+function sendStatus(tabId, status) {
+  chrome.tabs.sendMessage(tabId, { type: "cld-status", ...status });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender) => {
-  console.log("[CLD bg] received message", msg?.action, msg?.files?.length);
   if (!msg.action || !msg.files) return;
-  // Résoudre les URLs depuis l'onglet CyberLearn (qui a les cookies de session)
-  // puis stocker le résultat et ouvrir le popup
+  const tabId = sender.tab.id;
+
+  // Résoudre les URLs depuis l'onglet (cookies présents), puis traiter
   chrome.scripting.executeScript({
-    target: { tabId: sender.tab.id },
+    target: { tabId },
     func: async (files, extensions) => {
       const resolved = await Promise.all(files.map(async ({ href, name, folder: isFolder }) => {
         if (isFolder || href.includes("/mod/folder/view.php")) {
@@ -27,7 +32,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
             href.includes("?") ? href + "&redirect=1" : href + "?redirect=1",
             { credentials: "include", redirect: "follow" }
           );
-          const ct = res.headers.get("content-type") || "";
+          const ct   = res.headers.get("content-type") || "";
           const rext = res.url.split(".").pop().toLowerCase().split("?")[0];
           if (ct.includes("pdf") || ct.includes("octet-stream") ||
               extensions.includes(rext) || res.url.includes("pluginfile.php")) {
@@ -39,11 +44,60 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       return resolved.flat().filter(Boolean);
     },
     args: [msg.files, ["pdf","doc","docx","ppt","pptx","xls","xlsx","txt","md","py","js","java","sql","zip","png","jpg","jpeg","gif","svg"]],
-  }).then(results => {
+  }).then(async results => {
     const resolvedFiles = results[0]?.result ?? [];
-    const task = { ...msg, files: resolvedFiles, tabId: sender.tab.id };
-    chrome.storage.session.set({ pendingTask: task }, () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
-    });
+    if (resolvedFiles.length === 0) {
+      sendStatus(tabId, { btnKey: msg.btnKey, text: "Aucun fichier", state: "error" });
+      return;
+    }
+
+    if (msg.action === "download") {
+      // Télécharger chaque fichier depuis l'onglet et déclencher via chrome.downloads
+      const total = resolvedFiles.length;
+      for (const [i, { url, name, folder }] of resolvedFiles.entries()) {
+        sendStatus(tabId, { btnKey: msg.btnKey, text: `${i + 1}/${total}`, state: "progress" });
+        try {
+          // Fetch depuis l'onglet CyberLearn (cookies)
+          const [fetchResult] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: async (u) => {
+              const r = await fetch(u, { credentials: "include" });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const buf = await r.arrayBuffer();
+              return btoa(String.fromCharCode(...new Uint8Array(buf)));
+            },
+            args: [url],
+          });
+          if (fetchResult.error) throw new Error(fetchResult.error.message);
+
+          // Décoder base64 et déclencher le download depuis l'onglet
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (b64, filename) => {
+              const bin = atob(b64);
+              const arr = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(new Blob([arr]));
+              a.download = filename;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            },
+            args: [fetchResult.result, name || url.split("/").pop().split("?")[0]],
+          });
+        } catch (e) {
+          sendStatus(tabId, { btnKey: msg.btnKey, text: "Erreur", state: "error" });
+          return;
+        }
+      }
+      sendStatus(tabId, { btnKey: msg.btnKey, text: `✓ ${total} fichier${total > 1 ? "s" : ""}`, state: "done" });
+
+    } else {
+      // compile — nécessite PDF.js, déléguer au popup
+      const task = { ...msg, files: resolvedFiles, tabId };
+      chrome.storage.session.set({ pendingTask: task }, () => {
+        chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+      });
+    }
   });
 });

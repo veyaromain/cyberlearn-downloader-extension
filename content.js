@@ -10,7 +10,6 @@
       padding: 6px 0 10px;
     }
 
-    /* Boutons globaux : hérite du btn-primary Moodle/Bootstrap */
     .cld-btn-primary {
       display: inline-flex;
       align-items: center;
@@ -19,7 +18,6 @@
       white-space: nowrap;
     }
 
-    /* Boutons section : outline discret */
     .cld-section-btns {
       display: inline-flex;
       gap: 4px;
@@ -44,8 +42,8 @@
       transition: border-color 0.15s, color 0.15s;
     }
     .cld-btn-outline:hover { border-color: #0071e3; color: #0071e3; }
+    .cld-btn-outline:disabled { opacity: 0.6; cursor: default; pointer-events: none; }
 
-    /* Boutons fichier : icône seule, visible au survol */
     .cld-item-btns {
       position: absolute;
       right: 12px;
@@ -74,22 +72,94 @@
       transition: border-color 0.15s, color 0.15s;
     }
     .cld-btn-icon:hover { border-color: #0071e3; color: #0071e3; }
+    .cld-btn-icon:disabled { opacity: 0.6; cursor: default; pointer-events: none; }
+
+    .cld-btn-done  { border-color: #34c759 !important; color: #34c759 !important; }
+    .cld-btn-error { border-color: #ff3b30 !important; color: #ff3b30 !important; }
   `;
   document.head.appendChild(style);
 
-  // SVG icons inline (Font Awesome shapes, no dependency)
   const SVG = {
     download: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
     compile:  `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+    spinner:  `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:cld-spin 1s linear infinite"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" /></svg>`,
   };
 
+  // Ajouter l'animation du spinner
+  const spinStyle = document.createElement('style');
+  spinStyle.textContent = `@keyframes cld-spin { to { transform: rotate(360deg); } }`;
+  document.head.appendChild(spinStyle);
+
+  // Registre des boutons par clé pour recevoir les mises à jour de statut
+  const btnRegistry = new Map();
+  let btnCounter = 0;
+
   function makeBtn(cls, icon, label, title, onclick) {
+    const key = `cld-${++btnCounter}`;
     const btn = document.createElement('button');
     btn.className = cls;
     btn.title = title;
-    btn.innerHTML = SVG[icon] + (label ? `<span>${label}</span>` : '');
-    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onclick(); });
+    btn.dataset.cldKey = key;
+    btn.innerHTML = SVG[icon] + (label ? `<span class="cld-label">${label}</span>` : '');
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onclick(key, btn);
+    });
+    btnRegistry.set(key, { btn, originalHTML: btn.innerHTML, originalClass: btn.className });
     return btn;
+  }
+
+  function setProgress(key, text) {
+    const entry = btnRegistry.get(key);
+    if (!entry) return;
+    const { btn } = entry;
+    btn.disabled = true;
+    btn.classList.remove('cld-btn-done', 'cld-btn-error');
+    const label = btn.querySelector('.cld-label');
+    if (label) label.textContent = text;
+    else btn.innerHTML = SVG.spinner + `<span class="cld-label">${text}</span>`;
+  }
+
+  function setDone(key, text) {
+    const entry = btnRegistry.get(key);
+    if (!entry) return;
+    const { btn, originalHTML, originalClass } = entry;
+    btn.disabled = false;
+    btn.classList.add('cld-btn-done');
+    const label = btn.querySelector('.cld-label');
+    if (label) label.textContent = text;
+    // Remettre le style original après 3s
+    setTimeout(() => {
+      btn.innerHTML = originalHTML;
+      btn.className = originalClass;
+    }, 3000);
+  }
+
+  function setError(key, text) {
+    const entry = btnRegistry.get(key);
+    if (!entry) return;
+    const { btn, originalHTML, originalClass } = entry;
+    btn.disabled = false;
+    btn.classList.add('cld-btn-error');
+    const label = btn.querySelector('.cld-label');
+    if (label) label.textContent = text;
+    setTimeout(() => {
+      btn.innerHTML = originalHTML;
+      btn.className = originalClass;
+    }, 4000);
+  }
+
+  // Écouter les mises à jour de statut du background
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type !== 'cld-status') return;
+    if (msg.state === 'progress') setProgress(msg.btnKey, msg.text);
+    else if (msg.state === 'done')  setDone(msg.btnKey, msg.text);
+    else if (msg.state === 'error') setError(msg.btnKey, msg.text);
+  });
+
+  function send(payload) {
+    chrome.runtime.sendMessage(payload);
   }
 
   function collectSectionFiles(section) {
@@ -114,24 +184,13 @@
     return files;
   }
 
-  function send(payload) {
-    console.log("[CLD] sending", payload);
-    chrome.runtime.sendMessage(payload, (resp) => {
-      if (chrome.runtime.lastError) {
-        console.error("[CLD] sendMessage error:", chrome.runtime.lastError.message);
-      } else {
-        console.log("[CLD] response:", resp);
-      }
-    });
-  }
-
-  // --- Barre globale (juste avant la liste des sections) ---
+  // --- Barre globale ---
   const sectionList = document.querySelector('ul[data-for="course_sectionlist"]');
   if (sectionList) {
     const bar = document.createElement('div');
     bar.className = 'cld-global-bar';
-    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', () => send({ action: 'download', scope: 'all', files: collectAllFiles() })));
-    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', () => send({ action: 'compile',  scope: 'all', files: collectAllFiles() })));
+    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', (key) => { setProgress(key, '…'); send({ action: 'download', scope: 'all', files: collectAllFiles(), btnKey: key }); }));
+    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', (key) => { setProgress(key, '…'); send({ action: 'compile',  scope: 'all', files: collectAllFiles(), btnKey: key }); }));
     sectionList.insertAdjacentElement('beforebegin', bar);
   }
 
@@ -143,9 +202,8 @@
     if (header) {
       const wrap = document.createElement('span');
       wrap.className = 'cld-section-btns';
-      wrap.appendChild(makeBtn('cld-btn-outline', 'download', 'Télécharger', 'Télécharger les fichiers de cette section', () => send({ action: 'download', scope: 'section', sectionName, files: collectSectionFiles(section) })));
-      wrap.appendChild(makeBtn('cld-btn-outline', 'compile',  'Compiler',    'Compiler cette section pour LLM',            () => send({ action: 'compile',  scope: 'section', sectionName, files: collectSectionFiles(section) })));
-      // Insérer dans le header directement (déjà d-flex) pour que margin-left:auto fonctionne
+      wrap.appendChild(makeBtn('cld-btn-outline', 'download', 'Télécharger', 'Télécharger les fichiers de cette section', (key) => { setProgress(key, '…'); send({ action: 'download', scope: 'section', sectionName, files: collectSectionFiles(section), btnKey: key }); }));
+      wrap.appendChild(makeBtn('cld-btn-outline', 'compile',  'Compiler',    'Compiler cette section pour LLM',            (key) => { setProgress(key, '…'); send({ action: 'compile',  scope: 'section', sectionName, files: collectSectionFiles(section), btnKey: key }); }));
       header.style.alignItems = 'center';
       header.appendChild(wrap);
     }
@@ -165,8 +223,8 @@
 
       const wrap = document.createElement('span');
       wrap.className = 'cld-item-btns';
-      wrap.appendChild(makeBtn('cld-btn-icon', 'download', '', 'Télécharger ce fichier',    () => send({ action: 'download', scope: 'file', files: [{ href, name, folder }] })));
-      wrap.appendChild(makeBtn('cld-btn-icon', 'compile',  '', 'Compiler ce fichier pour LLM', () => send({ action: 'compile',  scope: 'file', files: [{ href, name, folder }] })));
+      wrap.appendChild(makeBtn('cld-btn-icon', 'download', '', 'Télécharger ce fichier',     (key) => { setProgress(key, ''); send({ action: 'download', scope: 'file', files: [{ href, name, folder }], btnKey: key }); }));
+      wrap.appendChild(makeBtn('cld-btn-icon', 'compile',  '', 'Compiler ce fichier pour LLM', (key) => { setProgress(key, ''); send({ action: 'compile',  scope: 'file', files: [{ href, name, folder }], btnKey: key }); }));
       item.appendChild(wrap);
     });
   });
