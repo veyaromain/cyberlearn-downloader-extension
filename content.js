@@ -159,7 +159,13 @@
   });
 
   function send(payload) {
-    chrome.runtime.sendMessage(payload);
+    try {
+      chrome.runtime.sendMessage(payload);
+    } catch (e) {
+      // Extension rechargée, recharger la page pour réinitialiser le content script
+      const entry = btnRegistry.get(payload.btnKey);
+      if (entry) setError(payload.btnKey, "Recharge la page");
+    }
   }
 
   function collectSectionFiles(section) {
@@ -189,8 +195,8 @@
   if (sectionList) {
     const bar = document.createElement('div');
     bar.className = 'cld-global-bar';
-    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', (key) => { setProgress(key, '…'); send({ action: 'download', scope: 'all', files: collectAllFiles(), btnKey: key }); }));
-    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', (key) => { setProgress(key, '…'); send({ action: 'compile',  scope: 'all', files: collectAllFiles(), btnKey: key }); }));
+    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', (key) => { setProgress(key, 'Résolution…'); send({ action: 'download', scope: 'all', files: collectAllFiles(), btnKey: key }); }));
+    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', (key) => { setProgress(key, 'Résolution…'); send({ action: 'compile',  scope: 'all', files: collectAllFiles(), btnKey: key }); }));
     sectionList.insertAdjacentElement('beforebegin', bar);
   }
 
@@ -202,8 +208,8 @@
     if (header) {
       const wrap = document.createElement('span');
       wrap.className = 'cld-section-btns';
-      wrap.appendChild(makeBtn('cld-btn-outline', 'download', 'Télécharger', 'Télécharger les fichiers de cette section', (key) => { setProgress(key, '…'); send({ action: 'download', scope: 'section', sectionName, files: collectSectionFiles(section), btnKey: key }); }));
-      wrap.appendChild(makeBtn('cld-btn-outline', 'compile',  'Compiler',    'Compiler cette section pour LLM',            (key) => { setProgress(key, '…'); send({ action: 'compile',  scope: 'section', sectionName, files: collectSectionFiles(section), btnKey: key }); }));
+      wrap.appendChild(makeBtn('cld-btn-outline', 'download', 'Télécharger', 'Télécharger les fichiers de cette section', (key) => { setProgress(key, 'Résolution…'); send({ action: 'download', scope: 'section', sectionName, files: collectSectionFiles(section), btnKey: key }); }));
+      wrap.appendChild(makeBtn('cld-btn-outline', 'compile',  'Compiler',    'Compiler cette section pour LLM',            (key) => { setProgress(key, 'Résolution…'); send({ action: 'compile',  scope: 'section', sectionName, files: collectSectionFiles(section), btnKey: key }); }));
       header.style.alignItems = 'center';
       header.appendChild(wrap);
     }
@@ -224,7 +230,7 @@
       const wrap = document.createElement('span');
       wrap.className = 'cld-item-btns';
       wrap.appendChild(makeBtn('cld-btn-icon', 'download', '', 'Télécharger ce fichier',     (key) => { setProgress(key, ''); send({ action: 'download', scope: 'file', files: [{ href, name, folder }], btnKey: key }); }));
-      wrap.appendChild(makeBtn('cld-btn-icon', 'compile',  '', 'Compiler ce fichier pour LLM', (key) => { setProgress(key, ''); send({ action: 'compile',  scope: 'file', files: [{ href, name, folder }], btnKey: key }); }));
+      wrap.appendChild(makeBtn('cld-btn-icon', 'compile',  '', 'Compiler ce fichier pour LLM', (key) => { setProgress(key, ''); send({ action: 'compile', scope: 'file', files: [{ href, name, folder }], btnKey: key }); }));
       item.appendChild(wrap);
     });
   });

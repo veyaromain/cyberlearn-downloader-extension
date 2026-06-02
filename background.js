@@ -49,16 +49,16 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }).then(async results => {
     const resolvedFiles = results[0]?.result ?? [];
     if (resolvedFiles.length === 0) {
-      sendStatus(tabId, { btnKey: msg.btnKey, text: "Aucun fichier", state: "error" });
+      sendStatus(tabId, { btnKey: msg.btnKey, text: "Aucun fichier trouvé", state: "error" });
       return;
     }
 
     if (msg.action === "download") {
       const total = resolvedFiles.length;
-      const collected = []; // { filename, b64, subfolder }
+      const collected = [];
 
       for (const [i, { url, name, folder }] of resolvedFiles.entries()) {
-        sendStatus(tabId, { btnKey: msg.btnKey, text: `${i + 1}/${total}`, state: "progress" });
+        sendStatus(tabId, { btnKey: msg.btnKey, text: `Téléchargement ${i + 1}/${total}`, state: "progress" });
         try {
           const [fetchResult] = await chrome.scripting.executeScript({
             target: { tabId },
@@ -77,12 +77,12 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
           const subfolder = folder ? folder.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_") + "/" : "";
           collected.push({ path: subfolder + filename, b64: fetchResult.result });
         } catch (e) {
-          sendStatus(tabId, { btnKey: msg.btnKey, text: "Erreur", state: "error" });
+          sendStatus(tabId, { btnKey: msg.btnKey, text: `Erreur : ${e.message}`, state: "error" });
           return;
         }
       }
 
-      sendStatus(tabId, { btnKey: msg.btnKey, text: "Compression…", state: "progress" });
+      sendStatus(tabId, { btnKey: msg.btnKey, text: `Compression de ${total} fichier${total > 1 ? "s" : ""}…`, state: "progress" });
 
       // Zipper dans le background (a accès à fflate), puis déclencher le download depuis l'onglet
       const entries = {};
