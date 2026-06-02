@@ -452,6 +452,28 @@ async function extractPdfText(pdfjsLib, url, onProgress) {
   return { text: result, usedOcr };
 }
 
+// --- Nettoyage du contenu pour réduire le bruit ---
+function cleanText(text) {
+  return text
+    // Supprimer les commentaires de page <!-- page N -->
+    .replace(/<!--\s*page \d+(\s*\(OCR\))?\s*-->/g, "")
+    // Supprimer les numéros de page isolés (ligne = juste un chiffre)
+    .replace(/^\s*\d{1,4}\s*$/gm, "")
+    // Supprimer les lignes qui ressemblent à des entêtes/pieds répétitifs Moodle
+    // (ligne courte répétée ≥ 3 fois dans le doc)
+    .split("\n").filter((line, _, arr) => {
+      const t = line.trim();
+      if (!t || t.length > 80) return true;
+      const count = arr.filter(l => l.trim() === t).length;
+      return count < 3;
+    }).join("\n")
+    // Réduire les blocs de lignes vides à 2 max
+    .replace(/\n{3,}/g, "\n\n")
+    // Supprimer les espaces en fin de ligne
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
 // --- Heuristique titres (pour PDFs) ---
 function detectHeadings(text, ext) {
   if (ext !== "pdf") return text; // ne pas transformer du code en titres Markdown
@@ -476,20 +498,28 @@ function buildLLMDoc(sections, pageTitle) {
   const now   = new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   const parts = [];
 
+  // Nettoyer tous les textes en amont
+  const cleaned = sections.map(s => ({ ...s, text: cleanText(s.text) }));
+
+  const totalKo = Math.round(cleaned.reduce((acc, s) => acc + s.text.length, 0) / 1024);
+
   parts.push(`# ${pageTitle || "Compilation de fichiers"}\n`);
   parts.push(`**Source :** page web active  `);
   parts.push(`**Généré le :** ${now}  `);
-  parts.push(`**Fichiers inclus :** ${sections.length}\n`);
+  parts.push(`**Fichiers inclus :** ${cleaned.length} — **${totalKo} Ko** de contenu\n`);
   parts.push("---\n");
 
   parts.push("## Table des matières\n");
-  for (const [i, { name }] of sections.entries()) {
-    const anchor = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    parts.push(`${i + 1}. [${name}](#${anchor})`);
+  for (const [i, { name, text, ext }] of cleaned.entries()) {
+    const anchor  = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    const ko      = Math.round(text.length / 1024);
+    const preview = text.replace(/\s+/g, " ").trim().slice(0, 120);
+    parts.push(`${i + 1}. [${name}](#${anchor}) — *${(ext || "?").toUpperCase()}, ${ko} Ko*`);
+    if (preview) parts.push(`   > ${preview}${text.length > 120 ? "…" : ""}`);
   }
   parts.push("\n---\n");
 
-  for (const [i, { name, text, ext }] of sections.entries()) {
+  for (const [i, { name, text, ext }] of cleaned.entries()) {
     const anchor    = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     const cleanName = name.replace(/\.[a-z0-9]+$/i, "");
     parts.push(`# ${i + 1}. ${cleanName}`);
@@ -508,13 +538,14 @@ function buildLLMDoc(sections, pageTitle) {
 function buildSingleDoc({ name, text, ext }) {
   const now       = new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   const cleanName = name.replace(/\.[a-z0-9]+$/i, "");
+  const cleaned   = cleanText(text);
   const parts     = [];
   parts.push(`# ${cleanName}\n`);
   parts.push(`**Fichier source :** \`${name}\`  `);
   parts.push(`**Type :** ${(ext || "?").toUpperCase()}  `);
   parts.push(`**Généré le :** ${now}\n`);
   parts.push("---\n");
-  parts.push(detectHeadings(text, ext));
+  parts.push(detectHeadings(cleaned, ext));
   return parts.join("\n");
 }
 
