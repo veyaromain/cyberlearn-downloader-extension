@@ -16,7 +16,7 @@ Extension Chrome pour télécharger ou compiler en Markdown les fichiers dépos�
 3. Les fichiers du cours sont détectés automatiquement
 4. Décocher les fichiers à exclure si besoin
 5. Choisir un mode :
-   - **Compiler pour LLM** — extrait le contenu de tous les fichiers sélectionnés dans un seul `.md` (idéal pour copier-coller dans ChatGPT, Claude, etc.)
+   - **Compiler pour LLM** — extrait le contenu de tous les fichiers sélectionnés dans un seul `.md` (idéal pour copier-coller dans ChatGPT, Claude, etc.). Les fichiers volumineux (> 50 Ko après nettoyage) sont automatiquement externalisés dans des `.md` séparés pour ne pas alourdir le document principal ; le tout est zippé automatiquement.
    - **Télécharger fichiers** — télécharge les fichiers bruts ; zippés automatiquement si plusieurs sont sélectionnés
 6. Cliquer le bouton d'action
 
