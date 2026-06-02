@@ -114,7 +114,16 @@
     return files;
   }
 
-  function send(payload) { chrome.runtime.sendMessage(payload); }
+  function send(payload) {
+    console.log("[CLD] sending", payload);
+    chrome.runtime.sendMessage(payload, (resp) => {
+      if (chrome.runtime.lastError) {
+        console.error("[CLD] sendMessage error:", chrome.runtime.lastError.message);
+      } else {
+        console.log("[CLD] response:", resp);
+      }
+    });
+  }
 
   // --- Barre globale (juste avant la liste des sections) ---
   const sectionList = document.querySelector('ul[data-for="course_sectionlist"]');

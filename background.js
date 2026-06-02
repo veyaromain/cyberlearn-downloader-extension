@@ -1,4 +1,5 @@
 chrome.runtime.onMessage.addListener((msg, sender) => {
+  console.log("[CLD bg] received message", msg?.action, msg?.files?.length);
   if (!msg.action || !msg.files) return;
   // Résoudre les URLs depuis l'onglet CyberLearn (qui a les cookies de session)
   // puis stocker le résultat et ouvrir le popup
