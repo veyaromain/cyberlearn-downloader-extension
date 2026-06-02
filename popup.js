@@ -455,24 +455,30 @@ async function extractPdfText(pdfjsLib, url, onProgress) {
 // --- Nettoyage du contenu pour réduire le bruit ---
 function cleanText(text) {
   return text
-    // Supprimer les commentaires de page <!-- page N -->
-    .replace(/<!--\s*page \d+(\s*\(OCR\))?\s*-->/g, "")
-    // Supprimer les numéros de page isolés (ligne = juste un chiffre)
+    // Commentaires de page <!-- page N --> et <!-- OCR appliqué ... -->
+    .replace(/<!--[^>]*-->/g, "")
+    // Numéros de slide isolés : "- 3 -" ou juste "3"
+    .replace(/^\s*-\s*\d{1,4}\s*-\s*$/gm, "")
     .replace(/^\s*\d{1,4}\s*$/gm, "")
-    // Supprimer les lignes qui ressemblent à des entêtes/pieds répétitifs Moodle
-    // (ligne courte répétée ≥ 3 fois dans le doc)
+    // Numéros de page style "1/6", "2/47"
+    .replace(/^\s*\d{1,3}\/\d{1,3}\s*$/gm, "")
+    // Métadonnées d'auteur/cours répétitives
+    .replace(/^Auteur\s*:.*$/gm, "")
+    .replace(/^Dernière mise à jour\s*:.*$/gm, "")
+    .replace(/^61-\d+\.\d+.*$/gm, "")
+    // Lignes courtes répétées ≥ 3 fois dans le doc (entêtes/pieds)
     .split("\n").filter((line, _, arr) => {
       const t = line.trim();
       if (!t || t.length > 80) return true;
-      const count = arr.filter(l => l.trim() === t).length;
-      return count < 3;
+      return arr.filter(l => l.trim() === t).length < 3;
     }).join("\n")
     // Réduire les blocs de lignes vides à 2 max
     .replace(/\n{3,}/g, "\n\n")
-    // Supprimer les espaces en fin de ligne
     .replace(/[ \t]+$/gm, "")
     .trim();
 }
+
+const BIG_FILE_THRESHOLD_KO = 50;
 
 // --- Heuristique titres (pour PDFs) ---
 function detectHeadings(text, ext) {
@@ -521,23 +527,33 @@ function deduplicateSections(sections) {
 }
 
 // --- Construction du fichier LLM ---
+// Retourne { main: string, extras: [{name, content}] }
 function buildLLMDoc(sections, pageTitle) {
   const now   = new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   const parts = [];
 
   // Nettoyer puis dédupliquer
-  const cleaned = deduplicateSections(sections.map(s => ({ ...s, text: cleanText(s.text) })));
+  const allCleaned = deduplicateSections(sections.map(s => ({ ...s, text: cleanText(s.text) })));
 
-  const totalKo = Math.round(cleaned.reduce((acc, s) => acc + s.text.length, 0) / 1024);
+  // Séparer petits et gros fichiers
+  const main   = allCleaned.filter(s => s.text.length / 1024 <= BIG_FILE_THRESHOLD_KO);
+  const extras = allCleaned.filter(s => s.text.length / 1024 >  BIG_FILE_THRESHOLD_KO);
+
+  const totalKo = Math.round(main.reduce((acc, s) => acc + s.text.length, 0) / 1024);
 
   parts.push(`# ${pageTitle || "Compilation de fichiers"}\n`);
   parts.push(`**Source :** page web active  `);
   parts.push(`**Généré le :** ${now}  `);
-  parts.push(`**Fichiers inclus :** ${cleaned.length} — **${totalKo} Ko** de contenu\n`);
+  parts.push(`**Fichiers inclus :** ${main.length} — **${totalKo} Ko** de contenu\n`);
+
+  if (extras.length > 0) {
+    parts.push(`> **${extras.length} fichier${extras.length > 1 ? "s" : ""} volumineux exporté${extras.length > 1 ? "s" : ""} séparément :** ${extras.map(s => `\`${s.name}\``).join(", ")}\n`);
+  }
+
   parts.push("---\n");
 
   parts.push("## Table des matières\n");
-  for (const [i, { name, text, ext }] of cleaned.entries()) {
+  for (const [i, { name, text, ext }] of main.entries()) {
     const anchor  = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     const ko      = Math.round(text.length / 1024);
     const preview = text.replace(/\s+/g, " ").trim().slice(0, 120);
@@ -546,11 +562,10 @@ function buildLLMDoc(sections, pageTitle) {
   }
   parts.push("\n---\n");
 
-  for (const [i, { name, text, ext }] of cleaned.entries()) {
+  for (const [i, { name, text, ext }] of main.entries()) {
     const anchor    = name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     const cleanName = name.replace(/\.[a-z0-9]+$/i, "");
     parts.push(`# ${i + 1}. ${cleanName}`);
-    parts.push(`<a id="${anchor}"></a>`);
     parts.push(`**Fichier source :** \`${name}\`  `);
     parts.push(`**Type :** ${(ext || "?").toUpperCase()}\n`);
     parts.push("---\n");
@@ -558,7 +573,12 @@ function buildLLMDoc(sections, pageTitle) {
     parts.push("\n\n---\n");
   }
 
-  return parts.join("\n");
+  const extraFiles = extras.map(s => ({
+    name: s.name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_") + ".md",
+    content: buildSingleDoc(s),
+  }));
+
+  return { main: parts.join("\n"), extras: extraFiles };
 }
 
 // --- Construction d'un .md individuel ---
@@ -693,11 +713,24 @@ btnAction.addEventListener("click", async () => {
     downloadBlob(new Blob([buildSingleDoc(section)], { type: "text/markdown;charset=utf-8" }), `${cleanName}.md`);
     setStatus("1 fichier .md généré", "success");
   } else {
-    // --- Compilation en un seul .md ---
-    const content  = buildLLMDoc(sections, pageTitle);
-    const filename = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_llm.md`;
-    downloadBlob(new Blob([content], { type: "text/markdown;charset=utf-8" }), filename);
-    setStatus(`Terminé — ${(content.length / 1024).toFixed(1)} Ko`, "success");
+    // --- Compilation en un seul .md (+ éventuels .md séparés pour les gros fichiers) ---
+    const { main, extras } = buildLLMDoc(sections, pageTitle);
+    const baseName = pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40);
+
+    if (extras.length > 0) {
+      // Zipper le .md principal + les .md des gros fichiers
+      const enc   = new TextEncoder();
+      const files = {};
+      files[`${baseName}_llm.md`] = enc.encode(main);
+      for (const { name, content } of extras) files[name] = enc.encode(content);
+      setStatus("Compression…");
+      const zipped = zipSync(files);
+      downloadBlob(new Blob([zipped], { type: "application/zip" }), `${baseName}_llm.zip`);
+      setStatus(`Terminé — ${(main.length / 1024).toFixed(1)} Ko + ${extras.length} fichier${extras.length > 1 ? "s" : ""} séparé${extras.length > 1 ? "s" : ""}`, "success");
+    } else {
+      downloadBlob(new Blob([main], { type: "text/markdown;charset=utf-8" }), `${baseName}_llm.md`);
+      setStatus(`Terminé — ${(main.length / 1024).toFixed(1)} Ko`, "success");
+    }
   }
   btnAction.disabled = false;
 });
