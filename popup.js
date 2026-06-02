@@ -722,7 +722,7 @@ btnAction.addEventListener("click", async () => {
       const [filename] = entries;
       downloadBlob(new Blob([files[filename]]), filename);
     } else if (entries.length > 1) {
-      const zipName = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}.zip`;
+      const zipName = `${pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60)}.zip`;
       setStatus("Compression…");
       const zipped = zipSync(files);
       downloadBlob(new Blob([zipped], { type: "application/zip" }), zipName);
@@ -774,7 +774,7 @@ btnAction.addEventListener("click", async () => {
       const cleanName = section.name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
       files[`${cleanName}.md`] = enc.encode(buildSingleDoc(section));
     }
-    const zipName = `${pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}_llm.zip`;
+    const zipName = `${pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60)}_llm.zip`;
     setStatus("Compression…");
     const zipped = zipSync(files);
     downloadBlob(new Blob([zipped], { type: "application/zip" }), zipName);
@@ -788,7 +788,7 @@ btnAction.addEventListener("click", async () => {
   } else {
     // --- Compilation en un seul .md (+ éventuels .md séparés pour les gros fichiers) ---
     const { main, extras } = buildLLMDoc(sections, pageTitle);
-    const baseName = pageTitle.replace(/[^a-z0-9]/gi, "_").slice(0, 40);
+    const baseName = pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60);
 
     if (extras.length > 0) {
       // Zipper le .md principal + les .md des gros fichiers
