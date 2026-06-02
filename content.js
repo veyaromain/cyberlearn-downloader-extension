@@ -10,24 +10,14 @@
       padding: 6px 0 10px;
     }
 
-    /* Boutons globaux : style btn-primary Moodle/Bootstrap */
+    /* Boutons globaux : hérite du btn-primary Moodle/Bootstrap */
     .cld-btn-primary {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 14px;
       font-size: 13px;
-      font-weight: 500;
-      line-height: 1.4;
       white-space: nowrap;
-      cursor: pointer;
-      border-radius: 4px;
-      border: 1px solid #0071e3;
-      background: #0071e3;
-      color: #fff;
-      transition: background 0.15s, border-color 0.15s;
     }
-    .cld-btn-primary:hover { background: #005bb5; border-color: #005bb5; }
 
     /* Boutons section : outline discret */
     .cld-section-btns {
@@ -131,8 +121,8 @@
   if (sectionList) {
     const bar = document.createElement('div');
     bar.className = 'cld-global-bar';
-    bar.appendChild(makeBtn('cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', () => send({ action: 'download', scope: 'all', files: collectAllFiles() })));
-    bar.appendChild(makeBtn('cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', () => send({ action: 'compile',  scope: 'all', files: collectAllFiles() })));
+    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', () => send({ action: 'download', scope: 'all', files: collectAllFiles() })));
+    bar.appendChild(makeBtn('btn btn-primary btn-sm cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', () => send({ action: 'compile',  scope: 'all', files: collectAllFiles() })));
     sectionList.insertAdjacentElement('beforebegin', bar);
   }
 
