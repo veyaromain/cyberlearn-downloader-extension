@@ -493,13 +493,40 @@ function detectHeadings(text, ext) {
   }).join("\n");
 }
 
+// --- Déduplication inter-fichiers ---
+// Supprime les paragraphes déjà vus dans un fichier précédent (≥ 5 mots)
+function deduplicateSections(sections) {
+  const seenBlocks = new Set();
+
+  return sections.map(section => {
+    const paragraphs = section.text.split(/\n{2,}/);
+    const kept = [];
+    let removed = 0;
+
+    for (const para of paragraphs) {
+      const key = para.trim().replace(/\s+/g, " ");
+      const wordCount = key.split(" ").length;
+      if (wordCount >= 5 && seenBlocks.has(key)) {
+        removed++;
+        continue;
+      }
+      if (wordCount >= 5) seenBlocks.add(key);
+      kept.push(para);
+    }
+
+    const text = kept.join("\n\n");
+    const suffix = removed > 0 ? `\n\n*[${removed} bloc${removed > 1 ? "s" : ""} dupliqué${removed > 1 ? "s" : ""} supprimé${removed > 1 ? "s" : ""}]*` : "";
+    return { ...section, text: text + suffix };
+  });
+}
+
 // --- Construction du fichier LLM ---
 function buildLLMDoc(sections, pageTitle) {
   const now   = new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   const parts = [];
 
-  // Nettoyer tous les textes en amont
-  const cleaned = sections.map(s => ({ ...s, text: cleanText(s.text) }));
+  // Nettoyer puis dédupliquer
+  const cleaned = deduplicateSections(sections.map(s => ({ ...s, text: cleanText(s.text) })));
 
   const totalKo = Math.round(cleaned.reduce((acc, s) => acc + s.text.length, 0) / 1024);
 
