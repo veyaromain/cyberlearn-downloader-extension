@@ -5,6 +5,7 @@
   style.textContent = `
     .cld-global-bar {
       display: flex;
+      justify-content: flex-end;
       gap: 8px;
       padding: 6px 0 10px;
     }
@@ -32,8 +33,9 @@
     .cld-section-btns {
       display: inline-flex;
       gap: 4px;
-      margin-left: 10px;
-      vertical-align: middle;
+      margin-left: auto;
+      padding-right: 8px;
+      flex-shrink: 0;
     }
     .cld-btn-outline {
       display: inline-flex;
@@ -124,14 +126,14 @@
 
   function send(payload) { chrome.runtime.sendMessage(payload); }
 
-  // --- Barre globale ---
-  const pageHeader = document.querySelector('.page-context-header');
-  if (pageHeader) {
+  // --- Barre globale (juste avant la liste des sections) ---
+  const sectionList = document.querySelector('ul[data-for="course_sectionlist"]');
+  if (sectionList) {
     const bar = document.createElement('div');
     bar.className = 'cld-global-bar';
-    bar.appendChild(makeBtn('cld-btn-primary', 'download', 'Tout télécharger',   'Télécharger tous les fichiers du cours', () => send({ action: 'download', scope: 'all', files: collectAllFiles() })));
+    bar.appendChild(makeBtn('cld-btn-primary', 'download', 'Tout télécharger',    'Télécharger tous les fichiers du cours', () => send({ action: 'download', scope: 'all', files: collectAllFiles() })));
     bar.appendChild(makeBtn('cld-btn-primary', 'compile',  'Tout compiler pour LLM', 'Compiler tous les fichiers en Markdown', () => send({ action: 'compile',  scope: 'all', files: collectAllFiles() })));
-    pageHeader.insertAdjacentElement('afterend', bar);
+    sectionList.insertAdjacentElement('beforebegin', bar);
   }
 
   // --- Boutons par section et par fichier ---
@@ -144,8 +146,9 @@
       wrap.className = 'cld-section-btns';
       wrap.appendChild(makeBtn('cld-btn-outline', 'download', 'Télécharger', 'Télécharger les fichiers de cette section', () => send({ action: 'download', scope: 'section', sectionName, files: collectSectionFiles(section) })));
       wrap.appendChild(makeBtn('cld-btn-outline', 'compile',  'Compiler',    'Compiler cette section pour LLM',            () => send({ action: 'compile',  scope: 'section', sectionName, files: collectSectionFiles(section) })));
-      const title = header.querySelector('h3.sectionname') || header;
-      title.appendChild(wrap);
+      // Insérer dans le header directement (déjà d-flex) pour que margin-left:auto fonctionne
+      header.style.alignItems = 'center';
+      header.appendChild(wrap);
     }
 
     section.querySelectorAll('li[data-for="cmitem"]').forEach((item) => {
