@@ -684,8 +684,12 @@ btnAction.addEventListener("click", async () => {
 
   if (selectedIndices.length === 0) return;
 
-  const [tab]     = await chrome.tabs.query({ active: true, currentWindow: true });
-  const pageTitle = tab.title || "compilation";
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [titleResult] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => document.querySelector(".page-header-headings h1")?.textContent?.trim() || null,
+  });
+  const pageTitle = titleResult?.result || tab.title || "compilation";
   const total     = selectedIndices.length;
 
   if (mode === "download") {
