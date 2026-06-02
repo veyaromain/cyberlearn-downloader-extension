@@ -373,21 +373,21 @@ async function getPdfJs() {
 }
 
 // --- Extraction de contenu selon le type de fichier ---
-// Retourne toujours une string
-async function extractContent(pdfjsLib, url, onProgress) {
+// Retourne toujours une string. buffer optionnel pour éviter un double fetch.
+async function extractContent(pdfjsLib, url, onProgress, buffer = null) {
   const ext = getExt(url);
 
   if (PDF_EXT.has(ext)) {
-    const { text, usedOcr } = await extractPdfText(pdfjsLib, url, onProgress);
+    const { text, usedOcr } = await extractPdfText(pdfjsLib, url, onProgress, buffer);
     return usedOcr ? `<!-- OCR appliqué sur pages sans texte sélectionnable -->\n${text}` : text;
   }
 
   if (IMAGE_EXT.has(ext)) {
     // OCR direct sur les images
     try {
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob   = await res.blob();
+      const blob = buffer
+        ? new Blob([buffer])
+        : await fetch(url, { credentials: "include" }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); });
       const bitmap = await createImageBitmap(blob);
       const canvas = document.createElement("canvas");
       canvas.width  = bitmap.width;
@@ -402,9 +402,13 @@ async function extractContent(pdfjsLib, url, onProgress) {
   }
 
   // Tentative de lecture texte brut (code, CSV, JSON, SQL, MD, etc.)
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const ct = res.headers.get("content-type") || "";
+  let ct = "";
+  if (!buffer) {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    ct = res.headers.get("content-type") || "";
+    buffer = await res.arrayBuffer();
+  }
 
   const looksLikeText = TEXT_MIME_PREFIXES.some(p => ct.includes(p)) ||
     ["txt","md","csv","tsv","json","xml","yaml","yml","toml","ini","cfg","conf",
@@ -413,7 +417,7 @@ async function extractContent(pdfjsLib, url, onProgress) {
       .includes(ext);
 
   if (looksLikeText) {
-    const text = await res.text();
+    const text = new TextDecoder().decode(buffer);
     return "```" + (ext || "") + "\n" + text + "\n```";
   }
 
@@ -430,10 +434,12 @@ async function renderPageToCanvas(page, scale = 2) {
   return canvas;
 }
 
-async function extractPdfText(pdfjsLib, url, onProgress) {
-  const response = await fetch(url, { credentials: "include" });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const buffer = await response.arrayBuffer();
+async function extractPdfText(pdfjsLib, url, onProgress, buffer = null) {
+  if (!buffer) {
+    const response = await fetch(url, { credentials: "include" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    buffer = await response.arrayBuffer();
+  }
 
   const doc       = await pdfjsLib.getDocument({ data: buffer }).promise;
   const pageParts = [];
@@ -860,45 +866,33 @@ async function runDetect() {
 btnReload.addEventListener("click", runDetect);
 
 // --- Tâche déclenchée depuis le content script ---
+// Les URLs sont déjà résolues par le background (depuis l'onglet CyberLearn)
 async function runPendingTask(task) {
-  // Résoudre les hrefs bruts (mod/resource/view.php, mod/folder/view.php, pluginfile.php)
-  const resolved = await Promise.all(task.files.map(async ({ href, name, folder: isFolder }) => {
-    // Dossier : fetcher la page et en extraire les pluginfile.php
-    if (isFolder || href.includes("/mod/folder/view.php")) {
-      try {
-        const res  = await fetch(href, { credentials: "include" });
-        const html = await res.text();
-        const doc  = new DOMParser().parseFromString(html, "text/html");
-        return Array.from(doc.querySelectorAll("a[href]"))
-          .map(a => a.href)
-          .filter(h => h.includes("pluginfile.php"))
-          .map(h => ({ url: h, name, folder: name }));
-      } catch { return []; }
-    }
-    // Fichier direct
-    const ext = getExt(href);
-    if (EXTENSIONS.includes(ext) || href.includes("pluginfile.php")) {
-      return [{ url: href, name }];
-    }
-    // Redirection Moodle
-    try {
-      const res = await fetch(
-        href.includes("?") ? href + "&redirect=1" : href + "?redirect=1",
-        { credentials: "include", redirect: "follow" }
-      );
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("pdf") || ct.includes("octet-stream") ||
-          EXTENSIONS.includes(getExt(res.url)) || res.url.includes("pluginfile.php")) {
-        return [{ url: res.url, name }];
-      }
-    } catch {}
-    return [];
-  }));
-
-  const entries = resolved.flat().filter(Boolean);
+  const entries = task.files.filter(f => f.url);
   if (entries.length === 0) { setStatus("Aucun fichier trouvé", "error"); return; }
 
   const pageTitle = task.sectionName || task.files[0]?.name || "compilation";
+
+  // Fetcher un fichier depuis l'onglet CyberLearn (cookies de session)
+  async function fetchFromTab(url) {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: task.tabId },
+      func: async (u) => {
+        const r = await fetch(u, { credentials: "include" });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const buf = await r.arrayBuffer();
+        // Convertir en base64 pour traverser la limite IPC
+        return btoa(String.fromCharCode(...new Uint8Array(buf)));
+      },
+      args: [url],
+    });
+    if (res.error) throw new Error(res.error.message);
+    const b64 = res.result;
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr.buffer;
+  }
 
   if (task.action === "download") {
     const files = {};
@@ -907,12 +901,10 @@ async function runPendingTask(task) {
       const name = actName || basename(url);
       setStatus(`Téléchargement ${j + 1}/${total} — ${name}`);
       try {
-        const res = await fetch(url, { credentials: "include" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const ext       = getExt(url);
         const filename  = name.includes(".") ? name : ext ? `${name}.${ext}` : name;
         const subfolder = folder ? folder.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_") + "/" : "";
-        files[subfolder + filename] = new Uint8Array(await res.arrayBuffer());
+        files[subfolder + filename] = new Uint8Array(await fetchFromTab(url));
       } catch (e) { setStatus(`Erreur : ${e.message}`, "error"); }
     }
     const keys = Object.keys(files);
@@ -924,7 +916,8 @@ async function runPendingTask(task) {
     }
     setStatus(`${keys.length} fichier${keys.length > 1 ? "s" : ""} téléchargé${keys.length > 1 ? "s" : ""}`, "success");
   } else {
-    // compile
+    // compile — PDF.js tourne dans le popup, mais le fetch doit venir de CyberLearn
+    // On récupère d'abord les ArrayBuffers depuis l'onglet source
     let pdfjsLib;
     try { pdfjsLib = await getPdfJs(); } catch { setStatus("Impossible de charger PDF.js", "error"); return; }
 
@@ -935,9 +928,10 @@ async function runPendingTask(task) {
       const name = actName || basename(url);
       setStatus(`Extraction ${j + 1}/${total} — ${name}`);
       try {
+        const buffer = await fetchFromTab(url);
         const text = await extractContent(pdfjsLib, url, (p, c) => {
           setStatus(`Extraction ${j + 1}/${total} — ${name} (p.${p}/${c})`);
-        });
+        }, buffer);
         sections.push({ name, text, ext, folder });
       } catch (e) { sections.push({ name, text: `<!-- Erreur : ${e.message} -->`, ext, folder }); }
     }
