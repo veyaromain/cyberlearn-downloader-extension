@@ -159,13 +159,14 @@
   });
 
   function send(payload) {
-    try {
-      chrome.runtime.sendMessage(payload);
-    } catch (e) {
-      // Extension rechargée, recharger la page pour réinitialiser le content script
-      const entry = btnRegistry.get(payload.btnKey);
-      if (entry) setError(payload.btnKey, "Recharge la page");
+    if (!chrome.runtime?.id) {
+      // Contexte invalidé (extension rechargée) — avertir et stopper
+      if (payload.btnKey) setError(payload.btnKey, "Recharge la page");
+      return;
     }
+    chrome.runtime.sendMessage(payload).catch(() => {
+      if (payload.btnKey) setError(payload.btnKey, "Recharge la page");
+    });
   }
 
   function collectSectionFiles(section) {
