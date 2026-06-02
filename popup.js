@@ -859,8 +859,121 @@ async function runDetect() {
 
 btnReload.addEventListener("click", runDetect);
 
+// --- Tâche déclenchée depuis le content script ---
+async function runPendingTask(task) {
+  // Résoudre les hrefs bruts (mod/resource/view.php, mod/folder/view.php, pluginfile.php)
+  const resolved = await Promise.all(task.files.map(async ({ href, name, folder: isFolder }) => {
+    // Dossier : fetcher la page et en extraire les pluginfile.php
+    if (isFolder || href.includes("/mod/folder/view.php")) {
+      try {
+        const res  = await fetch(href, { credentials: "include" });
+        const html = await res.text();
+        const doc  = new DOMParser().parseFromString(html, "text/html");
+        return Array.from(doc.querySelectorAll("a[href]"))
+          .map(a => a.href)
+          .filter(h => h.includes("pluginfile.php"))
+          .map(h => ({ url: h, name, folder: name }));
+      } catch { return []; }
+    }
+    // Fichier direct
+    const ext = getExt(href);
+    if (EXTENSIONS.includes(ext) || href.includes("pluginfile.php")) {
+      return [{ url: href, name }];
+    }
+    // Redirection Moodle
+    try {
+      const res = await fetch(
+        href.includes("?") ? href + "&redirect=1" : href + "?redirect=1",
+        { credentials: "include", redirect: "follow" }
+      );
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("pdf") || ct.includes("octet-stream") ||
+          EXTENSIONS.includes(getExt(res.url)) || res.url.includes("pluginfile.php")) {
+        return [{ url: res.url, name }];
+      }
+    } catch {}
+    return [];
+  }));
+
+  const entries = resolved.flat().filter(Boolean);
+  if (entries.length === 0) { setStatus("Aucun fichier trouvé", "error"); return; }
+
+  const pageTitle = task.sectionName || task.files[0]?.name || "compilation";
+
+  if (task.action === "download") {
+    const files = {};
+    const total = entries.length;
+    for (const [j, { url, name: actName, folder }] of entries.entries()) {
+      const name = actName || basename(url);
+      setStatus(`Téléchargement ${j + 1}/${total} — ${name}`);
+      try {
+        const res = await fetch(url, { credentials: "include" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const ext       = getExt(url);
+        const filename  = name.includes(".") ? name : ext ? `${name}.${ext}` : name;
+        const subfolder = folder ? folder.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_") + "/" : "";
+        files[subfolder + filename] = new Uint8Array(await res.arrayBuffer());
+      } catch (e) { setStatus(`Erreur : ${e.message}`, "error"); }
+    }
+    const keys = Object.keys(files);
+    if (keys.length === 1) {
+      downloadBlob(new Blob([files[keys[0]]]), keys[0].split("/").pop());
+    } else if (keys.length > 1) {
+      const zipName = pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60) + ".zip";
+      downloadBlob(new Blob([zipSync(files)], { type: "application/zip" }), zipName);
+    }
+    setStatus(`${keys.length} fichier${keys.length > 1 ? "s" : ""} téléchargé${keys.length > 1 ? "s" : ""}`, "success");
+  } else {
+    // compile
+    let pdfjsLib;
+    try { pdfjsLib = await getPdfJs(); } catch { setStatus("Impossible de charger PDF.js", "error"); return; }
+
+    const sections = [];
+    const total    = entries.length;
+    for (const [j, { url, name: actName, folder }] of entries.entries()) {
+      const ext  = getExt(url);
+      const name = actName || basename(url);
+      setStatus(`Extraction ${j + 1}/${total} — ${name}`);
+      try {
+        const text = await extractContent(pdfjsLib, url, (p, c) => {
+          setStatus(`Extraction ${j + 1}/${total} — ${name} (p.${p}/${c})`);
+        });
+        sections.push({ name, text, ext, folder });
+      } catch (e) { sections.push({ name, text: `<!-- Erreur : ${e.message} -->`, ext, folder }); }
+    }
+
+    const { main, extras } = buildLLMDoc(sections, pageTitle);
+    const baseName = pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60);
+    if (extras.length > 0) {
+      const enc   = new TextEncoder();
+      const zfiles = {};
+      zfiles[`${baseName}_llm.md`] = enc.encode(main);
+      for (const { name: n, content } of extras) zfiles[n] = enc.encode(content);
+      downloadBlob(new Blob([zipSync(zfiles)], { type: "application/zip" }), `${baseName}_llm.zip`);
+    } else {
+      downloadBlob(new Blob([main], { type: "text/markdown;charset=utf-8" }), `${baseName}_llm.md`);
+    }
+    setStatus(`Terminé — ${(main.length / 1024).toFixed(1)} Ko`, "success");
+  }
+}
+
 // --- Init ---
 (async () => {
+  // Vérifier si une tâche vient du content script
+  const { pendingTask } = await chrome.storage.session.get("pendingTask");
+  if (pendingTask) {
+    await chrome.storage.session.remove("pendingTask");
+    document.getElementById("mode-selector").style.display = "none";
+    selectBar.style.display = "none";
+    btnReload.style.display = "none";
+    subtitleEl.textContent  = pendingTask.sectionName || (pendingTask.scope === "all" ? "Tout le cours" : pendingTask.files[0]?.name || "");
+    document.getElementById("loader").classList.remove("hidden");
+    btnAction.style.display = "none";
+    await runPendingTask(pendingTask);
+    document.getElementById("loader").classList.add("hidden");
+    return;
+  }
+
   document.getElementById("mode-selector").style.display = "none";
   selectBar.style.display = "none";
   btnAction.style.display = "none";

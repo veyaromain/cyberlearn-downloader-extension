@@ -3,11 +3,21 @@
   "name": "Cyberlearn Downloader",
   "version": "1.1",
   "description": "Compile ou télécharge les fichiers d'une page Cyberlearn pour usage LLM.",
-  "permissions": ["activeTab", "scripting"],
+  "permissions": ["activeTab", "scripting", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://cyberlearn.hes-so.ch/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "web_accessible_resources": [
     {
       "resources": ["pdf.min.mjs", "pdf.worker.min.mjs", "fflate.mjs", "tesseract.esm.min.js", "tesseract.worker.min.js", "tesseract-core.wasm.js", "fra.traineddata.gz"],
