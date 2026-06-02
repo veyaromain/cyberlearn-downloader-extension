@@ -452,21 +452,17 @@ async function extractPdfText(pdfjsLib, url, onProgress) {
   return { text: result, usedOcr };
 }
 
-// --- Nettoyage du contenu pour réduire le bruit ---
+// --- Nettoyage structurel (universel, sans patterns spécifiques au cours) ---
 function cleanText(text) {
   return text
-    // Commentaires de page <!-- page N --> et <!-- OCR appliqué ... -->
+    // Commentaires HTML <!-- ... -->
     .replace(/<!--[^>]*-->/g, "")
-    // Numéros de slide isolés : "- 3 -" ou juste "3"
+    // Numéros de slide isolés : "- 3 -"
     .replace(/^\s*-\s*\d{1,4}\s*-\s*$/gm, "")
+    // Numéros de page isolés : "3" ou "1/6"
     .replace(/^\s*\d{1,4}\s*$/gm, "")
-    // Numéros de page style "1/6", "2/47"
     .replace(/^\s*\d{1,3}\/\d{1,3}\s*$/gm, "")
-    // Métadonnées d'auteur/cours répétitives
-    .replace(/^Auteur\s*:.*$/gm, "")
-    .replace(/^Dernière mise à jour\s*:.*$/gm, "")
-    .replace(/^61-\d+\.\d+.*$/gm, "")
-    // Lignes courtes répétées ≥ 3 fois dans le doc (entêtes/pieds)
+    // Lignes courtes répétées ≥ 3 fois dans le même fichier (entêtes/pieds)
     .split("\n").filter((line, _, arr) => {
       const t = line.trim();
       if (!t || t.length > 80) return true;
@@ -475,6 +471,35 @@ function cleanText(text) {
     // Réduire les blocs de lignes vides à 2 max
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
+// --- Détection des lignes répétées entre fichiers (métadonnées de cours) ---
+// Retourne un Set de lignes présentes dans ≥ 30% des fichiers
+function findCrossFileRepetitions(sections) {
+  if (sections.length < 3) return new Set();
+  const lineCount = new Map();
+  for (const { text } of sections) {
+    const seen = new Set();
+    for (const line of text.split("\n")) {
+      const t = line.trim();
+      if (!t || t.length > 100 || t.length < 4) continue;
+      if (!seen.has(t)) {
+        seen.add(t);
+        lineCount.set(t, (lineCount.get(t) || 0) + 1);
+      }
+    }
+  }
+  const threshold = Math.max(3, Math.round(sections.length * 0.3));
+  return new Set([...lineCount.entries()].filter(([, c]) => c >= threshold).map(([t]) => t));
+}
+
+function stripCrossFileRepetitions(text, noiseLines) {
+  if (noiseLines.size === 0) return text;
+  return text.split("\n")
+    .filter(line => !noiseLines.has(line.trim()))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -532,8 +557,12 @@ function buildLLMDoc(sections, pageTitle) {
   const now   = new Date().toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
   const parts = [];
 
-  // Nettoyer puis dédupliquer
-  const allCleaned = deduplicateSections(sections.map(s => ({ ...s, text: cleanText(s.text) })));
+  // Nettoyer individuellement, détecter le bruit inter-fichiers, dédupliquer
+  const perFileCleaned = sections.map(s => ({ ...s, text: cleanText(s.text) }));
+  const noiseLines     = findCrossFileRepetitions(perFileCleaned);
+  const allCleaned     = deduplicateSections(
+    perFileCleaned.map(s => ({ ...s, text: stripCrossFileRepetitions(s.text, noiseLines) }))
+  );
 
   // Séparer petits et gros fichiers
   const main   = allCleaned.filter(s => s.text.length / 1024 <= BIG_FILE_THRESHOLD_KO);
