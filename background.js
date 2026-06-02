@@ -1,3 +1,5 @@
+import { zipSync } from "./fflate.mjs";
+
 // Envoie un message de statut au content script de l'onglet
 function sendStatus(tabId, status) {
   chrome.tabs.sendMessage(tabId, { type: "cld-status", ...status });
@@ -52,12 +54,12 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     }
 
     if (msg.action === "download") {
-      // Télécharger chaque fichier depuis l'onglet et déclencher via chrome.downloads
       const total = resolvedFiles.length;
+      const collected = []; // { filename, b64, subfolder }
+
       for (const [i, { url, name, folder }] of resolvedFiles.entries()) {
         sendStatus(tabId, { btnKey: msg.btnKey, text: `${i + 1}/${total}`, state: "progress" });
         try {
-          // Fetch depuis l'onglet CyberLearn (cookies)
           const [fetchResult] = await chrome.scripting.executeScript({
             target: { tabId },
             func: async (u) => {
@@ -69,27 +71,44 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
             args: [url],
           });
           if (fetchResult.error) throw new Error(fetchResult.error.message);
-
-          // Décoder base64 et déclencher le download depuis l'onglet
-          await chrome.scripting.executeScript({
-            target: { tabId },
-            func: (b64, filename) => {
-              const bin = atob(b64);
-              const arr = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-              const a = document.createElement("a");
-              a.href = URL.createObjectURL(new Blob([arr]));
-              a.download = filename;
-              a.click();
-              URL.revokeObjectURL(a.href);
-            },
-            args: [fetchResult.result, name || url.split("/").pop().split("?")[0]],
-          });
+          const ext      = url.split(".").pop().toLowerCase().split("?")[0];
+          const basename = name || url.split("/").pop().split("?")[0];
+          const filename = basename.includes(".") ? basename : ext ? `${basename}.${ext}` : basename;
+          const subfolder = folder ? folder.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_") + "/" : "";
+          collected.push({ path: subfolder + filename, b64: fetchResult.result });
         } catch (e) {
           sendStatus(tabId, { btnKey: msg.btnKey, text: "Erreur", state: "error" });
           return;
         }
       }
+
+      sendStatus(tabId, { btnKey: msg.btnKey, text: "Compression…", state: "progress" });
+
+      // Zipper dans le background (a accès à fflate), puis déclencher le download depuis l'onglet
+      const entries = {};
+      for (const { path, b64 } of collected) {
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        entries[path] = arr;
+      }
+      const zipped  = zipSync(entries);
+      const zipName = (msg.sectionName || "cours").replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60) + ".zip";
+
+      // Transférer le zip comme tableau de nombres (Array) pour traverser la IPC
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (bytes, filename) => {
+          const arr = new Uint8Array(bytes);
+          const a   = document.createElement("a");
+          a.href     = URL.createObjectURL(new Blob([arr], { type: "application/zip" }));
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        },
+        args: [Array.from(zipped), zipName],
+      });
+
       sendStatus(tabId, { btnKey: msg.btnKey, text: `✓ ${total} fichier${total > 1 ? "s" : ""}`, state: "done" });
 
     } else {

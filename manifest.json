@@ -5,7 +5,8 @@
   "description": "Compile ou télécharge les fichiers d'une page Cyberlearn pour usage LLM.",
   "permissions": ["activeTab", "scripting", "storage"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "host_permissions": ["<all_urls>"],
   "action": {
@@ -20,7 +21,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs", "fflate.mjs", "tesseract.esm.min.js", "tesseract.worker.min.js", "tesseract-core.wasm.js", "fra.traineddata.gz"],
+      "resources": ["pdf.min.mjs", "pdf.worker.min.mjs", "fflate.mjs", "tesseract.esm.min.js", "tesseract.worker.min.js", "tesseract-core.wasm.js", "fra.traineddata.gz", "engine.js"],
       "matches": ["<all_urls>"]
     }
   ]
