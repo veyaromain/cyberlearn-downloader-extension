@@ -457,11 +457,17 @@ function cleanText(text) {
   return text
     // Commentaires HTML <!-- ... -->
     .replace(/<!--[^>]*-->/g, "")
+    // Marqueurs de slide : "Slide 3", "Slide 3 :", "SLIDE 3"
+    .replace(/^\s*Slides?\s*\d+\s*:?\s*$/gim, "")
     // Numéros de slide isolés : "- 3 -"
     .replace(/^\s*-\s*\d{1,4}\s*-\s*$/gm, "")
     // Numéros de page isolés : "3" ou "1/6"
     .replace(/^\s*\d{1,4}\s*$/gm, "")
     .replace(/^\s*\d{1,3}\/\d{1,3}\s*$/gm, "")
+    // Adresses email isolées sur une ligne
+    .replace(/^\s*[\w.+-]+@[\w.-]+\.[a-z]{2,}\s*$/gim, "")
+    // URLs isolées sur une ligne
+    .replace(/^\s*https?:\/\/\S+\s*$/gm, "")
     // Lignes courtes répétées ≥ 3 fois dans le même fichier (entêtes/pieds)
     .split("\n").filter((line, _, arr) => {
       const t = line.trim();
@@ -472,6 +478,40 @@ function cleanText(text) {
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]+$/gm, "")
     .trim();
+}
+
+const TOTAL_THRESHOLD_KO = 100;
+
+// Tronque les fichiers les plus longs pour respecter le budget total
+function applyGlobalBudget(sections) {
+  const totalKo = sections.reduce((acc, s) => acc + s.text.length / 1024, 0);
+  if (totalKo <= TOTAL_THRESHOLD_KO) return sections;
+
+  // Trier par taille décroissante, tronquer les plus gros en premier
+  const budget  = TOTAL_THRESHOLD_KO * 1024;
+  const sorted  = [...sections].sort((a, b) => b.text.length - a.text.length);
+  let remaining = budget;
+
+  // Calculer le quota par fichier (les petits gardent tout, les gros sont coupés)
+  const quotas = new Map();
+  for (const s of sorted) {
+    const fair = remaining / (sorted.length - quotas.size);
+    if (s.text.length <= fair) {
+      quotas.set(s.name, s.text.length);
+      remaining -= s.text.length;
+    } else {
+      quotas.set(s.name, Math.floor(fair));
+      remaining -= fair;
+    }
+  }
+
+  return sections.map(s => {
+    const quota = quotas.get(s.name);
+    if (s.text.length <= quota) return s;
+    const truncated = s.text.slice(0, quota).replace(/\s+\S*$/, ""); // couper proprement
+    const removedKo = Math.round((s.text.length - truncated.length) / 1024);
+    return { ...s, text: truncated + `\n\n*[… ${removedKo} Ko tronqués pour respecter le budget global]*` };
+  });
 }
 
 // --- Détection des lignes répétées entre fichiers (métadonnées de cours) ---
@@ -560,13 +600,13 @@ function buildLLMDoc(sections, pageTitle) {
   // Nettoyer individuellement, détecter le bruit inter-fichiers, dédupliquer
   const perFileCleaned = sections.map(s => ({ ...s, text: cleanText(s.text) }));
   const noiseLines     = findCrossFileRepetitions(perFileCleaned);
-  const allCleaned     = deduplicateSections(
+  const deduped        = deduplicateSections(
     perFileCleaned.map(s => ({ ...s, text: stripCrossFileRepetitions(s.text, noiseLines) }))
   );
 
-  // Séparer petits et gros fichiers
-  const main   = allCleaned.filter(s => s.text.length / 1024 <= BIG_FILE_THRESHOLD_KO);
-  const extras = allCleaned.filter(s => s.text.length / 1024 >  BIG_FILE_THRESHOLD_KO);
+  // Séparer gros fichiers (externalisés) puis appliquer le budget global sur le reste
+  const main   = applyGlobalBudget(deduped.filter(s => s.text.length / 1024 <= BIG_FILE_THRESHOLD_KO));
+  const extras = deduped.filter(s => s.text.length / 1024 >  BIG_FILE_THRESHOLD_KO);
 
   const totalKo = Math.round(main.reduce((acc, s) => acc + s.text.length, 0) / 1024);
 
