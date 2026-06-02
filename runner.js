@@ -1,10 +1,9 @@
-// runner.js — traitement headless de compilation (PDF.js + Tesseract)
-// Chargé dans un iframe caché injecté par le content script
+// runner.js — offscreen document pour compilation PDF.js + Tesseract
 import { zipSync } from "./fflate.mjs";
 import Tesseract from "./tesseract.esm.min.js";
 import {
   getExt, basename, TEXT_MIME_PREFIXES, PDF_EXT, IMAGE_EXT,
-  buildLLMDoc, buildSingleDoc, downloadBlob,
+  buildLLMDoc, buildSingleDoc,
 } from "./engine.js";
 
 let tesseractWorker = null;
@@ -35,12 +34,23 @@ async function renderPageToCanvas(page, scale = 2) {
   return canvas;
 }
 
-async function extractPdfText(pdfjsLib, url, onProgress, buffer = null) {
-  if (!buffer) {
-    const response = await fetch(url, { credentials: "include" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    buffer = await response.arrayBuffer();
+function b64ToBuffer(b64) {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr.buffer;
+}
+
+function bufferToB64(buf) {
+  const arr = new Uint8Array(buf);
+  let b64 = "";
+  for (let i = 0; i < arr.length; i += 8192) {
+    b64 += btoa(String.fromCharCode(...arr.subarray(i, i + 8192)));
   }
+  return b64;
+}
+
+async function extractPdfText(pdfjsLib, url, onProgress, buffer) {
   const doc       = await pdfjsLib.getDocument({ data: buffer }).promise;
   const pageParts = [];
   let   usedOcr   = false;
@@ -79,7 +89,7 @@ async function extractPdfText(pdfjsLib, url, onProgress, buffer = null) {
   return { text: pageParts.join("\n\n"), usedOcr };
 }
 
-async function extractContent(pdfjsLib, url, onProgress, buffer = null) {
+async function extractContent(pdfjsLib, url, onProgress, buffer) {
   const ext = getExt(url);
   if (PDF_EXT.has(ext)) {
     const { text, usedOcr } = await extractPdfText(pdfjsLib, url, onProgress, buffer);
@@ -87,7 +97,7 @@ async function extractContent(pdfjsLib, url, onProgress, buffer = null) {
   }
   if (IMAGE_EXT.has(ext)) {
     try {
-      const blob   = buffer ? new Blob([buffer]) : await fetch(url, { credentials: "include" }).then(r => r.blob());
+      const blob   = new Blob([buffer]);
       const bitmap = await createImageBitmap(blob);
       const canvas = document.createElement("canvas");
       canvas.width  = bitmap.width;
@@ -100,14 +110,7 @@ async function extractContent(pdfjsLib, url, onProgress, buffer = null) {
       return `[Image — OCR échoué : ${e.message}]`;
     }
   }
-  let ct = "";
-  if (!buffer) {
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    ct     = res.headers.get("content-type") || "";
-    buffer = await res.arrayBuffer();
-  }
-  const looksLikeText = TEXT_MIME_PREFIXES.some(p => ct.includes(p)) ||
+  const looksLikeText =
     ["txt","md","csv","tsv","json","xml","yaml","yml","toml","ini","cfg","conf",
      "js","ts","jsx","tsx","py","java","c","cpp","h","hpp","cs","go","rs","rb",
      "php","swift","kt","scala","sh","bash","zsh","ps1","sql","r","log","rst","ipynb"]
@@ -116,49 +119,68 @@ async function extractContent(pdfjsLib, url, onProgress, buffer = null) {
   return `[Fichier binaire — ${basename(url)} (${(ext || "?").toUpperCase()}) — contenu non extractible]`;
 }
 
-// Écouter la tâche depuis le content script via postMessage
-window.addEventListener("message", async (event) => {
-  if (event.data?.type !== "cld-compile-task") return;
-  const { task } = event.data;
-  const reply = (msg) => event.source.postMessage({ type: "cld-compile-status", btnKey: task.btnKey, ...msg }, "*");
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "cld-compile-task-offscreen") return false;
 
-  const entries = task.files.filter(f => f.url);
-  if (entries.length === 0) { reply({ state: "error", text: "Aucun fichier" }); return; }
-
-  let pdfjsLib;
-  try { pdfjsLib = await getPdfJs(); }
-  catch { reply({ state: "error", text: "PDF.js indisponible" }); return; }
-
-  const sections = [];
-  const total    = entries.length;
-  for (const [j, { url, name: actName, folder }] of entries.entries()) {
-    const ext  = getExt(url);
-    const name = actName || basename(url);
-    reply({ state: "progress", text: `Extraction ${j + 1}/${total}` });
-    try {
-      const text = await extractContent(pdfjsLib, url, (p, c) => {
-        reply({ state: "progress", text: `Extraction ${j + 1}/${total} — p.${p}/${c}` });
-      });
-      sections.push({ name, text, ext, folder });
-    } catch (e) {
-      sections.push({ name, text: `<!-- Erreur : ${e.message} -->`, ext, folder });
+  (async () => {
+    let pdfjsLib;
+    try { pdfjsLib = await getPdfJs(); }
+    catch (e) {
+      chrome.runtime.sendMessage({ type: "cld-compile-result", btnKey: msg.btnKey, error: "PDF.js indisponible" });
+      return;
     }
-  }
 
-  reply({ state: "progress", text: "Compilation…" });
-  const pageTitle = task.sectionName || task.files[0]?.name || "compilation";
-  const { main, extras } = buildLLMDoc(sections, pageTitle);
-  const baseName = pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60);
+    const sections = [];
+    const total    = msg.files.length;
 
-  if (extras.length > 0) {
-    const enc = new TextEncoder();
-    const zfiles = {};
-    zfiles[`${baseName}_llm.md`] = enc.encode(main);
-    for (const { name: n, content } of extras) zfiles[n] = enc.encode(content);
-    downloadBlob(new Blob([zipSync(zfiles)], { type: "application/zip" }), `${baseName}_llm.zip`);
-  } else {
-    downloadBlob(new Blob([main], { type: "text/markdown;charset=utf-8" }), `${baseName}_llm.md`);
-  }
+    for (const [j, { url, name: actName, folder, b64, error }] of msg.files.entries()) {
+      const ext  = getExt(url);
+      const name = actName || basename(url);
 
-  reply({ state: "done", text: `✓ ${(main.length / 1024).toFixed(0)} Ko` });
+      if (error || !b64) {
+        sections.push({ name, text: `<!-- Erreur récupération : ${error || "buffer manquant"} -->`, ext, folder });
+        continue;
+      }
+
+      try {
+        const buffer = b64ToBuffer(b64);
+        const text   = await extractContent(pdfjsLib, url, () => {}, buffer);
+        sections.push({ name, text, ext, folder });
+      } catch (e) {
+        sections.push({ name, text: `<!-- Erreur : ${e.message} -->`, ext, folder });
+      }
+    }
+
+    const pageTitle  = msg.sectionName || msg.files[0]?.name || "compilation";
+    const { main, extras } = buildLLMDoc(sections, pageTitle);
+    const baseName   = pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60);
+
+    let b64out, filename, isZip = false;
+
+    if (extras.length > 0) {
+      const enc    = new TextEncoder();
+      const zfiles = {};
+      zfiles[`${baseName}_llm.md`] = enc.encode(main);
+      for (const { name: n, content } of extras) zfiles[n] = enc.encode(content);
+      const zipped = zipSync(zfiles);
+      b64out   = bufferToB64(zipped.buffer);
+      filename = `${baseName}_llm.zip`;
+      isZip    = true;
+    } else {
+      const enc = new TextEncoder();
+      b64out    = bufferToB64(enc.encode(main).buffer);
+      filename  = `${baseName}_llm.md`;
+    }
+
+    chrome.runtime.sendMessage({
+      type: "cld-compile-result",
+      btnKey: msg.btnKey,
+      b64: b64out,
+      filename,
+      isZip,
+      sizeKo: Math.round(main.length / 1024),
+    });
+  })();
+
+  return false;
 });

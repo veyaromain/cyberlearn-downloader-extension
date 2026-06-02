@@ -3,7 +3,7 @@
   "name": "Cyberlearn Downloader",
   "version": "1.1",
   "description": "Compile ou télécharge les fichiers d'une page Cyberlearn pour usage LLM.",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "scripting", "storage", "offscreen"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

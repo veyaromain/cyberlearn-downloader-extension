@@ -112,11 +112,87 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       sendStatus(tabId, { btnKey: msg.btnKey, text: `✓ ${total} fichier${total > 1 ? "s" : ""}`, state: "done" });
 
     } else {
-      // compile — déléguer au content script via iframe runner
-      chrome.tabs.sendMessage(tabId, {
-        type: "cld-compile-task",
-        task: { ...msg, files: resolvedFiles, tabId },
+      // compile — fetcher les fichiers depuis l'onglet, compiler via offscreen document
+      const total = resolvedFiles.length;
+      const filesWithBuffers = [];
+
+      for (const [i, entry] of resolvedFiles.entries()) {
+        sendStatus(tabId, { btnKey: msg.btnKey, text: `Récupération ${i + 1}/${total}`, state: "progress" });
+        try {
+          const [fetchResult] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: async (u) => {
+              const r = await fetch(u, { credentials: "include" });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const buf = await r.arrayBuffer();
+              let b64 = "";
+              const arr = new Uint8Array(buf);
+              for (let i = 0; i < arr.length; i += 8192) {
+                b64 += btoa(String.fromCharCode(...arr.subarray(i, i + 8192)));
+              }
+              return b64;
+            },
+            args: [entry.url],
+          });
+          filesWithBuffers.push({ ...entry, b64: fetchResult.result });
+        } catch (e) {
+          filesWithBuffers.push({ ...entry, b64: null, error: e.message });
+        }
+      }
+
+      sendStatus(tabId, { btnKey: msg.btnKey, text: "Compilation…", state: "progress" });
+
+      // Créer/réutiliser l'offscreen document
+      const offscreenUrl = chrome.runtime.getURL("runner.html");
+      const existing = await chrome.offscreen.hasDocument?.() ?? false;
+      if (!existing) {
+        await chrome.offscreen.createDocument({
+          url: offscreenUrl,
+          reasons: ["DOM_SCRAPING"],
+          justification: "PDF parsing and text extraction with PDF.js and Tesseract",
+        }).catch(() => {});
+      }
+
+      // Envoyer la tâche à l'offscreen et attendre le résultat
+      const result = await new Promise((resolve) => {
+        const listener = (response) => {
+          if (response?.type !== "cld-compile-result" || response.btnKey !== msg.btnKey) return;
+          chrome.runtime.onMessage.removeListener(listener);
+          resolve(response);
+        };
+        chrome.runtime.onMessage.addListener(listener);
+        chrome.runtime.sendMessage({
+          type: "cld-compile-task-offscreen",
+          btnKey: msg.btnKey,
+          files: filesWithBuffers,
+          sectionName: msg.sectionName,
+        });
       });
+
+      if (result.error) {
+        sendStatus(tabId, { btnKey: msg.btnKey, text: `Erreur : ${result.error}`, state: "error" });
+        return;
+      }
+
+      // Déclencher le download depuis l'onglet CyberLearn
+      sendStatus(tabId, { btnKey: msg.btnKey, text: "Téléchargement…", state: "progress" });
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (b64, filename, isZip) => {
+          const bin = atob(b64);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          const mime = isZip ? "application/zip" : "text/markdown;charset=utf-8";
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(new Blob([arr], { type: mime }));
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        },
+        args: [result.b64, result.filename, result.isZip],
+      });
+
+      sendStatus(tabId, { btnKey: msg.btnKey, text: `✓ ${result.sizeKo} Ko compilés`, state: "done" });
     }
   });
 });
