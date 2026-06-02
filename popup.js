@@ -278,7 +278,7 @@ async function detectFiles() {
       return Array.from(doc.querySelectorAll("a[href]"))
         .map(a => a.href)
         .filter(h => h.includes("pluginfile.php"))
-        .map(h => ({ href: h, name: folderName }));
+        .map(h => ({ href: h, name: folderName, folder: folderName }));
     } catch { return []; }
   }))).flat();
 
@@ -286,11 +286,11 @@ async function detectFiles() {
 
   // Résoudre les redirections Moodle (mod/resource/view.php)
   const resolved = await Promise.all(
-    candidates.map(async ({ href, name }) => {
+    candidates.map(async ({ href, name, folder }) => {
       const lower = href.toLowerCase();
       const ext   = getExt(href);
       if (EXTENSIONS.includes(ext) || lower.includes("pluginfile.php")) {
-        return { url: href, name };
+        return { url: href, name, folder };
       }
       try {
         const res = await fetch(
@@ -300,7 +300,7 @@ async function detectFiles() {
         const ct = res.headers.get("content-type") || "";
         if (ct.includes("pdf") || ct.includes("octet-stream") ||
             EXTENSIONS.includes(getExt(res.url)) || res.url.includes("pluginfile.php")) {
-          return { url: res.url, name };
+          return { url: res.url, name, folder };
         }
       } catch {}
       return null;
@@ -724,7 +724,7 @@ btnAction.addEventListener("click", async () => {
     // --- Téléchargement brut ---
     const files = {};
     for (const [j, idx] of selectedIndices.entries()) {
-      const { url, name: activityName } = fileEntries[idx];
+      const { url, name: activityName, folder } = fileEntries[idx];
       const name = activityName || basename(url);
       const dot  = listEl.querySelectorAll(".dot")[idx];
 
@@ -734,10 +734,11 @@ btnAction.addEventListener("click", async () => {
       try {
         const res = await fetch(url, { credentials: "include" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const ext      = getExt(url);
-        const filename = name.includes(".") ? name : ext ? `${name}.${ext}` : name;
-        const buf      = await res.arrayBuffer();
-        files[filename] = new Uint8Array(buf);
+        const ext        = getExt(url);
+        const filename   = name.includes(".") ? name : ext ? `${name}.${ext}` : name;
+        const subfolder  = folder ? folder.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_") + "/" : "";
+        const buf        = await res.arrayBuffer();
+        files[subfolder + filename] = new Uint8Array(buf);
         if (dot) dot.style.background = "#34c759";
       } catch (e) {
         if (dot) dot.style.background = "#ff3b30";
@@ -774,7 +775,7 @@ btnAction.addEventListener("click", async () => {
   const sections = [];
 
   for (const [j, idx] of selectedIndices.entries()) {
-    const { url, name: activityName } = fileEntries[idx];
+    const { url, name: activityName, folder } = fileEntries[idx];
     const ext  = getExt(url);
     const name = activityName || basename(url);
     const dot  = listEl.querySelectorAll(".dot")[idx];
@@ -786,7 +787,7 @@ btnAction.addEventListener("click", async () => {
       const text = await extractContent(pdfjsLib, url, (pageNum, pageCount) => {
         setStatus(`Extraction ${j + 1}/${total} — ${name} (p.${pageNum}/${pageCount})`);
       });
-      sections.push({ name, text, ext });
+      sections.push({ name, text, ext, folder });
       if (dot) dot.style.background = "#34c759";
     } catch (e) {
       sections.push({ name, text: `<!-- Erreur : ${e.message} -->`, ext });
@@ -799,8 +800,9 @@ btnAction.addEventListener("click", async () => {
     const enc   = new TextEncoder();
     const files = {};
     for (const section of sections) {
-      const cleanName = section.name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
-      files[`${cleanName}.md`] = enc.encode(buildSingleDoc(section));
+      const cleanName  = section.name.replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]/gi, "_");
+      const subfolder  = section.folder ? section.folder.replace(/[^a-z0-9]/gi, "_").replace(/_+/g, "_") + "/" : "";
+      files[`${subfolder}${cleanName}.md`] = enc.encode(buildSingleDoc(section));
     }
     const zipName = `${pageTitle.replace(/[^a-z0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 60)}_llm.zip`;
     setStatus("Compression…");
